@@ -1,0 +1,77 @@
+# IBVAP node — systemd unit for a bare-metal BOP installation.
+#
+#   sudo cp deploy/systemd/ibvap.service /etc/systemd/system/
+#   sudo systemctl edit ibvap        # add the secret (see below)
+#   sudo systemctl enable --now ibvap
+#
+# Put secrets in an override or an EnvironmentFile, never in this unit — unit
+# files are world-readable.
+
+[Unit]
+Description=IBVAP — Intelligent Border Video Analytics Platform
+Documentation=https://github.com/tedo001/border-serv-ai
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=ibvap
+Group=ibvap
+WorkingDirectory=/var/lib/ibvap
+
+Environment=IBVAP_CONFIG=/etc/ibvap/site.yaml
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/ibvap/ibvap.env
+
+ExecStart=/opt/ibvap/venv/bin/ibvap serve
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart on failure, but rate-limit it: a node that crash-loops on a bad
+# configuration should stop and be noticed, not thrash the disk all night.
+Restart=on-failure
+RestartSec=10
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+# Give in-flight evidence writes time to complete before SIGKILL.
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+# --- hardening ---
+# This process ingests untrusted video from an operational network and decodes
+# it with ffmpeg. Assume the decoder can be made to misbehave and contain it.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=false   # ONNX Runtime JITs kernels and needs W^X relaxed
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# Only these paths are writable.
+ReadWritePaths=/var/lib/ibvap/data /var/log/ibvap
+ReadOnlyPaths=/etc/ibvap /var/lib/ibvap/models
+
+# Resource ceilings so analytics cannot starve the host.
+CPUQuota=600%
+MemoryMax=8G
+TasksMax=512
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ibvap
+
+[Install]
+WantedBy=multi-user.target

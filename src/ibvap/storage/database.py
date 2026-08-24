@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
 
 from sqlalchemy import event as sa_event
 from sqlalchemy.ext.asyncio import (
@@ -115,7 +115,7 @@ class Database:
                 await session.rollback()
                 raise
 
-    async def __aenter__(self) -> "Database":
+    async def __aenter__(self) -> Database:
         await self.connect()
         return self
 

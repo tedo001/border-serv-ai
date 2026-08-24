@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
 from fastapi import APIRouter, HTTPException, Request, status
 
 from ibvap.api.deps import (
@@ -31,8 +29,8 @@ from ibvap.api.security import (
     password_strength_issues,
     verify_password,
 )
+from ibvap.api.status_codes import HTTP_422_UNPROCESSABLE
 from ibvap.core.errors import AuthError
-from ibvap.api.status_codes import HTTP_413_TOO_LARGE, HTTP_422_UNPROCESSABLE
 from ibvap.core.logging import get_logger
 from ibvap.storage.repository import ApiKeyRepository, UserRepository
 

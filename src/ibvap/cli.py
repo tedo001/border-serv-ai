@@ -11,7 +11,6 @@ import argparse
 import json
 import secrets
 import sys
-from pathlib import Path
 from typing import Any
 
 from ibvap import __version__
@@ -230,8 +229,9 @@ def _validate(args: Any) -> int:
 
     for camera in settings.cameras:
         for zone in camera.zones:
-            from ibvap.core.geometry import polygon_area
             import numpy as np
+
+            from ibvap.core.geometry import polygon_area
 
             area = polygon_area(np.array(zone.points))
             if area < 0.005:

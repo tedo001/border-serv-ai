@@ -75,7 +75,20 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RET", "PTH", "ASYNC"]
-ignore = ["B008", "SIM108", "RET504"]
+ignore = [
+  "B008",     # FastAPI's Depends() in defaults is the framework's own idiom
+  "SIM108",   # ternaries are not always clearer than an if/else
+  "RET504",   # a named return value often documents what is being returned
+  "B027",     # optional lifecycle hooks on an ABC are intentionally empty
+  "SIM105",   # try/except/pass reads better than contextlib.suppress here
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Qt overrides are camelCase by the framework's contract, and Qt objects are
+# constructed in argument position throughout.
+"src/ibvap/desktop/*" = ["N802", "B008"]
+# Tests import fixtures and assert on internals deliberately.
+"tests/*" = ["E501", "SLF001"]
 
 [tool.mypy]
 python_version = "3.10"

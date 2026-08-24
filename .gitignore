@@ -32,3 +32,6 @@ models/**
 .env.*
 !.env.example
 .DS_Store
+
+# Local site configuration (copy from configs/site.example.yaml)
+configs/site.yaml

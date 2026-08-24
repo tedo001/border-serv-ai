@@ -44,11 +44,11 @@ class ObjectClass(str, Enum):
     UNKNOWN = "unknown"
 
     @property
-    def category(self) -> "ObjectCategory":
+    def category(self) -> ObjectCategory:
         return _CLASS_TO_CATEGORY.get(self, ObjectCategory.OTHER)
 
     @classmethod
-    def coerce(cls, value: str | "ObjectClass") -> "ObjectClass":
+    def coerce(cls, value: str | ObjectClass) -> ObjectClass:
         """Map an arbitrary label onto the taxonomy, never raising.
 
         Unknown labels degrade to :attr:`UNKNOWN` so that swapping in a model
@@ -194,15 +194,15 @@ class BBox:
         return cx, cy, self.width, self.height
 
     @classmethod
-    def from_xywh(cls, cx: float, cy: float, w: float, h: float) -> "BBox":
+    def from_xywh(cls, cx: float, cy: float, w: float, h: float) -> BBox:
         hw, hh = w / 2.0, h / 2.0
         return cls(cx - hw, cy - hh, cx + hw, cy + hh)
 
     @classmethod
-    def from_tlwh(cls, x: float, y: float, w: float, h: float) -> "BBox":
+    def from_tlwh(cls, x: float, y: float, w: float, h: float) -> BBox:
         return cls(x, y, x + w, y + h)
 
-    def iou(self, other: "BBox") -> float:
+    def iou(self, other: BBox) -> float:
         """Intersection-over-union with another box."""
         ix1, iy1 = max(self.x1, other.x1), max(self.y1, other.y1)
         ix2, iy2 = min(self.x2, other.x2), min(self.y2, other.y2)
@@ -216,7 +216,7 @@ class BBox:
     def contains_point(self, x: float, y: float) -> bool:
         return self.x1 <= x <= self.x2 and self.y1 <= y <= self.y2
 
-    def clip(self, width: float, height: float) -> "BBox":
+    def clip(self, width: float, height: float) -> BBox:
         """Clamp the box to a frame of the given size."""
         return BBox(
             max(0.0, min(self.x1, width)),
@@ -225,16 +225,16 @@ class BBox:
             max(0.0, min(self.y2, height)),
         )
 
-    def scale(self, sx: float, sy: float | None = None) -> "BBox":
+    def scale(self, sx: float, sy: float | None = None) -> BBox:
         sy = sx if sy is None else sy
         return BBox(self.x1 * sx, self.y1 * sy, self.x2 * sx, self.y2 * sy)
 
-    def expand(self, ratio: float) -> "BBox":
+    def expand(self, ratio: float) -> BBox:
         """Grow the box outward by ``ratio`` of its size on every side."""
         dw, dh = self.width * ratio, self.height * ratio
         return BBox(self.x1 - dw, self.y1 - dh, self.x2 + dw, self.y2 + dh)
 
-    def distance_to(self, other: "BBox") -> float:
+    def distance_to(self, other: BBox) -> float:
         """Euclidean distance between box centres, in pixels."""
         (ax, ay), (bx, by) = self.center, other.center
         return math.hypot(ax - bx, ay - by)
@@ -392,7 +392,7 @@ class EventType(str, Enum):
     CAMERA_ONLINE = "camera_online"
 
     @property
-    def default_severity(self) -> "Severity":
+    def default_severity(self) -> Severity:
         return _DEFAULT_SEVERITY.get(self, Severity.LOW)
 
 

@@ -31,7 +31,7 @@ import os
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -433,7 +433,8 @@ class EvidenceStore:
         if self.config.max_bytes > 0:
             total = sum(size for _, _, size in entries)
             if total > self.config.max_bytes:
-                for mtime, path, size in sorted(entries):
+                # sorted() orders by mtime first, so this walks oldest-first.
+                for _mtime, path, size in sorted(entries):
                     if total <= self.config.max_bytes:
                         break
                     if _safe_unlink(path):

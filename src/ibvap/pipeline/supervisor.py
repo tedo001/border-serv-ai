@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from ibvap.core.config import CameraConfig, Settings
 from ibvap.core.errors import ConfigError
 from ibvap.core.logging import get_logger
-from ibvap.core.types import Event, Frame, Track
+from ibvap.core.types import Frame, Track
 from ibvap.mlops.registry import ModelRegistry
 from ibvap.pipeline.models import ModelBundle, build_model_bundle
 from ibvap.pipeline.worker import CameraWorker, EventSink
@@ -225,7 +226,7 @@ class Supervisor:
         with self._lock:
             return [w.status() for w in self.workers.values()]
 
-    def __enter__(self) -> "Supervisor":
+    def __enter__(self) -> Supervisor:
         self.start()
         return self
 

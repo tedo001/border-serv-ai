@@ -108,7 +108,7 @@ class EventResponse(BaseModel):
     disposition: str | None
 
     @classmethod
-    def from_record(cls, record: EventRecord) -> "EventResponse":
+    def from_record(cls, record: EventRecord) -> EventResponse:
         return cls(
             event_id=record.event_id,
             camera_id=record.camera_id,
@@ -313,7 +313,7 @@ class AuditResponse(BaseModel):
     success: bool
 
     @classmethod
-    def from_record(cls, record: AuditRecord) -> "AuditResponse":
+    def from_record(cls, record: AuditRecord) -> AuditResponse:
         return cls(
             timestamp=record.timestamp,
             timestamp_iso=to_iso(record.timestamp),

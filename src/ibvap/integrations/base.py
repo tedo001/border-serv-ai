@@ -45,9 +45,7 @@ class Sink(ABC):
             return False
         if _ORDER.get(event.severity.value, 0) < _ORDER.get(self.min_severity, 0):
             return False
-        if self.event_types and event.event_type.value not in self.event_types:
-            return False
-        return True
+        return not (self.event_types and event.event_type.value not in self.event_types)
 
     @abstractmethod
     async def deliver(self, payload: dict[str, Any]) -> None:

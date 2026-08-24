@@ -18,9 +18,9 @@ from ibvap.api.deps import (
     audit,
 )
 from ibvap.api.schemas import CameraPayload, CameraStatusResponse, MessageResponse
+from ibvap.api.status_codes import HTTP_422_UNPROCESSABLE
 from ibvap.core.config import CameraConfig
 from ibvap.core.errors import ConfigError
-from ibvap.api.status_codes import HTTP_413_TOO_LARGE, HTTP_422_UNPROCESSABLE
 from ibvap.core.logging import get_logger
 from ibvap.events.annotate import annotate_frame
 from ibvap.storage.repository import CameraRepository

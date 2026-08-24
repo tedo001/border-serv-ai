@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from PyQt6.QtCore import QTimer, Qt, pyqtSlot
+from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import QAction, QImage, QKeySequence
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -680,10 +680,10 @@ class MainWindow(QMainWindow):
         del self.alerts[200:]
         self._populate_alert_table()
 
-        if tile := self.tiles.get(alert["camera_id"]):
-            if alert["severity"] in ("high", "critical"):
-                tile.flash_alert()
-                QTimer.singleShot(5000, tile.clear_alert)
+        tile = self.tiles.get(alert["camera_id"])
+        if tile is not None and alert["severity"] in ("high", "critical"):
+            tile.flash_alert()
+            QTimer.singleShot(5000, tile.clear_alert)
 
     def on_link_state(self, state: str) -> None:
         colour = {"live": "#3fb950", "connecting": "#d29922", "reconnecting": "#d29922"}.get(
@@ -956,8 +956,9 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            with open(path, "rb") as handle:
-                encoded = base64.b64encode(handle.read()).decode()
+            from pathlib import Path as _Path
+
+            encoded = base64.b64encode(_Path(path).read_bytes()).decode()
         except OSError as exc:
             QMessageBox.warning(self, "Enrolment failed", str(exc))
             return

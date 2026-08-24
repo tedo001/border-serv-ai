@@ -23,8 +23,9 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass, field
-from typing import Any, Callable
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -32,7 +33,6 @@ from ibvap.analytics.engine import AnalyticsEngine
 from ibvap.core.config import CameraConfig, Settings
 from ibvap.core.logging import bind_context, get_logger
 from ibvap.core.types import (
-    BBox,
     Detection,
     Event,
     EventType,
@@ -185,9 +185,9 @@ class CameraWorker:
             inference_image = frame.image
 
         detections = self._detect(inference_image)
-        tracks = self.tracker.update(
-            detections, timestamp=frame.timestamp, monotonic=frame.monotonic
-        )
+        # Called for its side effect on tracker state; only confirmed tracks
+        # are trustworthy enough to drive alerts, so those are read back.
+        self.tracker.update(detections, timestamp=frame.timestamp, monotonic=frame.monotonic)
         confirmed = self.tracker.confirmed_tracks
 
         events: list[Event] = []

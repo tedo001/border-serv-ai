@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from starlette import status
 
+
 def _resolve(current: str, legacy: str, fallback: int) -> int:
     """Prefer the current constant name, falling back to the legacy spelling.
 

@@ -15,12 +15,9 @@ already-struggling link.
 from __future__ import annotations
 
 import os
-import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Iterator
 
 import cv2
 import numpy as np
@@ -71,7 +68,7 @@ class VideoSource(ABC):
     def info(self) -> SourceInfo:
         return SourceInfo()
 
-    def __enter__(self) -> "VideoSource":
+    def __enter__(self) -> VideoSource:
         self.open()
         return self
 

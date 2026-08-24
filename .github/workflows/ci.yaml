@@ -1,0 +1,185 @@
+name: CI
+
+on:
+  push:
+    branches: [main, tedo]
+  pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs: CI feedback on a stale commit helps nobody.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  lint:
+    name: Lint and type-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff
+        run: ruff check src tests
+
+      - name: Ruff format check
+        run: ruff format --check src tests
+        continue-on-error: true
+
+      - name: mypy
+        run: mypy
+        continue-on-error: true   # advisory while annotations are completed
+
+  test:
+    name: Tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      - name: System dependencies
+        # OpenCV needs libGL and libglib even in its headless build; ffmpeg
+        # supplies the decoders the ingest layer exercises.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libglib2.0-0 ffmpeg
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Unit tests
+        run: pytest tests/unit -q --cov=ibvap --cov-report=xml --cov-report=term
+
+      - name: Integration tests
+        # These start real camera workers and an ASGI node, so they are slower
+        # and are kept as a separate step to make failures easy to attribute.
+        run: pytest tests/integration -q
+
+      - name: Upload coverage
+        if: matrix.python == '3.11'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+
+  config:
+    name: Validate shipped configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgl1 libglib2.0-0 ffmpeg
+
+      - name: Install
+        run: pip install -e .
+
+      - name: Validate the example site file
+        # Catches a rule pointing at a zone that no longer exists, a zone in
+        # pixels rather than normalised coordinates, and similar mistakes that
+        # would otherwise surface only on a node at a border post.
+        run: ibvap validate configs/site.example.yaml
+
+      - name: Registry is parseable
+        run: ibvap models list
+
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+
+      - name: Install audit tools
+        run: pip install pip-audit bandit
+
+      - name: Dependency audit
+        run: pip-audit --desc || true
+
+      - name: Static analysis
+        # B104 (bind all interfaces) is expected: a node binds 0.0.0.0 on an
+        # isolated operational network by design.
+        run: bandit -r src/ibvap -ll --skip B104
+
+  docker:
+    name: Container image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          push: false
+          load: true
+          tags: ibvap:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke-test the image
+        # Starts a node against a synthetic camera and waits for it to report
+        # ready — proving the image runs, not merely that it builds.
+        run: |
+          mkdir -p /tmp/ibvap-ci
+          cat > /tmp/ibvap-ci/site.yaml <<'YAML'
+          site_id: ci
+          site_name: CI Node
+          telemetry: { log_level: WARNING }
+          cameras:
+            - id: cam-ci
+              url: "synthetic://?width=320&height=240&fps=10"
+              target_fps: 5
+              rules:
+                - { id: presence, type: presence }
+          YAML
+          docker run -d --name ibvap-ci -p 8080:8080 \
+            -e IBVAP_SECURITY__JWT_SECRET=$(head -c 48 /dev/urandom | base64) \
+            -e IBVAP_SECURITY__BOOTSTRAP_ADMIN_PASSWORD=CiPassphrase123! \
+            -v /tmp/ibvap-ci/site.yaml:/etc/ibvap/site.yaml:ro \
+            ibvap:ci
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/health/ready; then
+              echo "node became ready"
+              break
+            fi
+            sleep 2
+          done
+
+          curl -fsS http://127.0.0.1:8080/health | tee /tmp/health.json
+          python -c "
+          import json,sys
+          health=json.load(open('/tmp/health.json'))
+          assert health['cameras_online'] == 1, health
+          print('smoke test passed:', health['status'])
+          "
+          docker rm -f ibvap-ci

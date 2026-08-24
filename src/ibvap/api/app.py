@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import time
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware

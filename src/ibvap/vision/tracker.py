@@ -366,9 +366,10 @@ class ByteTracker:
         track.obj_class = entry.vote_class(detection.obj_class)
         track.last_monotonic = monotonic or track.last_monotonic
 
-        if track.state is TrackState.TENTATIVE and track.hits >= self.min_hits:
-            track.state = TrackState.CONFIRMED
-        elif track.state is TrackState.LOST:
+        promoted_from_tentative = (
+            track.state is TrackState.TENTATIVE and track.hits >= self.min_hits
+        )
+        if promoted_from_tentative or track.state is TrackState.LOST:
             track.state = TrackState.CONFIRMED
 
         track.trail.append(track.bbox.foot)

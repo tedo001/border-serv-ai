@@ -35,10 +35,12 @@ log = get_logger(__name__)
 #: RTO state/UT codes. Union territories reorganised in 2020 (DD+DN -> DD,
 #: LA created for Ladakh), so both historical and current codes are accepted -
 #: vehicles carrying the older plates are still very much on the roads.
-STATE_CODES: frozenset[str] = frozenset(
-    """AN AP AR AS BR CG CH DD DL DN GA GJ HP HR JH JK KA KL LA LD MH ML MN MP
-       MZ NL OD OR PB PY RJ SK TG TN TR TS UA UK UP WB""".split()
-)
+STATE_CODES: frozenset[str] = frozenset({
+    "AN", "AP", "AR", "AS", "BR", "CG", "CH", "DD", "DL", "DN",
+    "GA", "GJ", "HP", "HR", "JH", "JK", "KA", "KL", "LA", "LD",
+    "MH", "ML", "MN", "MP", "MZ", "NL", "OD", "OR", "PB", "PY",
+    "RJ", "SK", "TG", "TN", "TR", "TS", "UA", "UK", "UP", "WB",
+})
 
 #: Characters an OCR model confuses with a *letter* when the position demands
 #: one, and vice versa. Derived from the visual similarity of the glyphs in the

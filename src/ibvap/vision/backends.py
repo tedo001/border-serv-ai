@@ -81,7 +81,7 @@ class InferenceBackend(ABC):
     def close(self) -> None:
         """Release native resources. Safe to call more than once."""
 
-    def __enter__(self) -> "InferenceBackend":
+    def __enter__(self) -> InferenceBackend:
         return self
 
     def __exit__(self, *exc: object) -> None:

@@ -11,8 +11,8 @@ import cv2
 import numpy as np
 
 from ibvap.core.geometry import Tripwire, Zone
-from ibvap.core.types import BBox, Event, ObjectCategory, Severity, Track
 from ibvap.core.timeutils import to_iso
+from ibvap.core.types import BBox, Event, ObjectCategory, Severity, Track
 
 #: BGR palette. Severity drives colour so a wall of thumbnails is triageable at
 #: a glance without reading any text.

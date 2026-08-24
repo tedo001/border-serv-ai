@@ -43,7 +43,7 @@ is never misled about the quality of what it is watching.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Sequence
+from collections.abc import Sequence
 
 import cv2
 import numpy as np

@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Callable, Iterable
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from ibvap.core.config import Settings
 from ibvap.core.errors import IntegrationError

@@ -1,0 +1,75 @@
+# IBVAP edge deployment — a single BOP node.
+#
+#   1. cp configs/site.example.yaml configs/site.yaml   and edit
+#   2. ibvap secret >> deploy/docker/.env               (generates the JWT key)
+#   3. docker compose -f deploy/docker/compose.yaml up -d
+#
+# Cameras are reached on the operational network; nothing here needs to be
+# exposed to the internet.
+
+name: ibvap
+
+services:
+  node:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: ibvap:1.0.0
+    container_name: ibvap-node
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../../configs/site.yaml:/etc/ibvap/site.yaml:ro
+      # Model artefacts are mounted read-only: a running node has no business
+      # modifying the models it is being audited against.
+      - ../../models:/var/lib/ibvap/models:ro
+      - ibvap-data:/var/lib/ibvap/data
+    environment:
+      IBVAP_CONFIG: /etc/ibvap/site.yaml
+      # Secrets come from the environment, never from the site file, which
+      # gets copied between posts and attached to tickets.
+      IBVAP_SECURITY__JWT_SECRET: ${IBVAP_SECURITY__JWT_SECRET:?set this — run `ibvap secret`}
+      IBVAP_SECURITY__BOOTSTRAP_ADMIN_PASSWORD: ${IBVAP_BOOTSTRAP_PASSWORD:-}
+      IBVAP_TELEMETRY__LOG_FORMAT: json
+    # Analytics is CPU-bound and will consume whatever it is given; a limit
+    # keeps a busy scene from starving the rest of the host.
+    deploy:
+      resources:
+        limits:
+          cpus: "6.0"
+          memory: 8G
+        reservations:
+          cpus: "2.0"
+          memory: 2G
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # Optional: local metrics retention so a post keeps its own history when the
+  # link to the sector Prometheus is down.
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ibvap-prometheus
+    restart: unless-stopped
+    profiles: [monitoring]
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+
+volumes:
+  ibvap-data:
+  prometheus-data:

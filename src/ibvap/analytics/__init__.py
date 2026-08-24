@@ -7,6 +7,7 @@ engine would otherwise build an empty rule set and a camera would run with all
 of its analytics silently disabled.
 """
 
+from ibvap.analytics import rules as _rules  # noqa: F401  (populates the registry)
 from ibvap.analytics.base import (  # noqa: F401
     Rule,
     RuleContext,
@@ -14,7 +15,6 @@ from ibvap.analytics.base import (  # noqa: F401
     build_rule,
     register_rule,
 )
-from ibvap.analytics import rules as _rules  # noqa: F401  (populates the registry)
 from ibvap.analytics.engine import AnalyticsEngine, EventGate  # noqa: F401
 
 __all__ = [

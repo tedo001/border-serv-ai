@@ -24,7 +24,7 @@ from typing import Any
 
 from ibvap.core.config import CameraConfig, ModelsConfig, Settings
 from ibvap.core.logging import get_logger
-from ibvap.mlops.registry import ModelRegistry, ModelVersion
+from ibvap.mlops.registry import ModelRegistry
 from ibvap.telemetry.metrics import Metrics
 from ibvap.vision.anpr import PlateLocator, PlateOCR, PlateReader
 from ibvap.vision.detector import BaseDetector, MotionDetector, ObjectDetector

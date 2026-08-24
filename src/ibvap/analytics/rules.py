@@ -17,11 +17,10 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from ibvap.core.geometry import CrossingDirection
+from ibvap.analytics.base import Rule, RuleContext, register_rule
 from ibvap.core.logging import get_logger
 from ibvap.core.timeutils import humanise_duration
 from ibvap.core.types import Event, EventType, ObjectCategory, ObjectClass, Severity, Track
-from ibvap.analytics.base import Rule, RuleContext, register_rule
 
 log = get_logger(__name__)
 

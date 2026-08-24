@@ -27,7 +27,7 @@ from typing import Any
 
 import yaml
 
-from ibvap.core.config import ModelSpec, ModelsConfig
+from ibvap.core.config import ModelsConfig, ModelSpec
 from ibvap.core.errors import (
     ChecksumMismatchError,
     ConfigError,
@@ -137,7 +137,7 @@ class ModelRegistry:
     # -- loading ----------------------------------------------------------- #
 
     @classmethod
-    def load(cls, config: ModelsConfig | None = None) -> "ModelRegistry":
+    def load(cls, config: ModelsConfig | None = None) -> ModelRegistry:
         registry = cls(config)
         registry.reload()
         return registry

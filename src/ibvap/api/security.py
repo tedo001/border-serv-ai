@@ -60,12 +60,12 @@ class Role(str, Enum):
     def level(self) -> int:
         return _ROLE_LEVEL[self]
 
-    def satisfies(self, required: "Role") -> bool:
+    def satisfies(self, required: Role) -> bool:
         """Whether this role meets or exceeds ``required``."""
         return self.level >= required.level
 
     @classmethod
-    def coerce(cls, value: str) -> "Role":
+    def coerce(cls, value: str) -> Role:
         try:
             return cls(str(value).lower())
         except ValueError:

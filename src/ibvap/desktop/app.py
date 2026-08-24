@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import sys
-from typing import Any
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
     QFormLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QVBoxLayout,
 )

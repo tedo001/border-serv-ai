@@ -51,7 +51,7 @@ class ZoneConfig(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def _default_name(self) -> "ZoneConfig":
+    def _default_name(self) -> ZoneConfig:
         if not self.name:
             self.name = self.id
         return self
@@ -72,7 +72,7 @@ class TripwireConfig(BaseModel):
     enabled: bool = True
 
     @model_validator(mode="after")
-    def _validate(self) -> "TripwireConfig":
+    def _validate(self) -> TripwireConfig:
         for pt in (self.start, self.end):
             if not (0.0 <= pt[0] <= 1.0 and 0.0 <= pt[1] <= 1.0):
                 raise ValueError(f"tripwire points must be normalised to [0,1], got {pt}")
@@ -141,7 +141,7 @@ class CameraConfig(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _validate(self) -> "CameraConfig":
+    def _validate(self) -> CameraConfig:
         if not self.name:
             self.name = self.id
         zone_ids = {z.id for z in self.zones}
@@ -187,10 +187,16 @@ class ModelsConfig(BaseModel):
     #: Keeps CI and field drills runnable on a laptop with no model files.
     allow_stub_fallback: bool = True
 
-    detector: ModelSpec = Field(default_factory=lambda: ModelSpec(name="yolo-person-vehicle", score_threshold=0.35))
-    face_detector: ModelSpec = Field(default_factory=lambda: ModelSpec(name="face-detector", score_threshold=0.6))
+    detector: ModelSpec = Field(
+        default_factory=lambda: ModelSpec(name="yolo-person-vehicle", score_threshold=0.35)
+    )
+    face_detector: ModelSpec = Field(
+        default_factory=lambda: ModelSpec(name="face-detector", score_threshold=0.6)
+    )
     face_embedder: ModelSpec = Field(default_factory=lambda: ModelSpec(name="face-embedder"))
-    plate_detector: ModelSpec = Field(default_factory=lambda: ModelSpec(name="plate-detector", score_threshold=0.4))
+    plate_detector: ModelSpec = Field(
+        default_factory=lambda: ModelSpec(name="plate-detector", score_threshold=0.4)
+    )
     plate_ocr: ModelSpec = Field(default_factory=lambda: ModelSpec(name="plate-ocr"))
 
 
@@ -214,7 +220,7 @@ class PipelineConfig(BaseModel):
     max_track_only_frames: int = Field(default=10, ge=1, le=120)
 
     @model_validator(mode="after")
-    def _validate(self) -> "PipelineConfig":
+    def _validate(self) -> PipelineConfig:
         if self.reconnect_max_seconds < self.reconnect_min_seconds:
             raise ValueError("reconnect_max_seconds must be >= reconnect_min_seconds")
         return self
@@ -431,7 +437,7 @@ class Settings(BaseSettings):
     cameras: list[CameraConfig] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _validate(self) -> "Settings":
+    def _validate(self) -> Settings:
         ids = [c.id for c in self.cameras]
         dupes = {i for i in ids if ids.count(i) > 1}
         if dupes:

@@ -131,7 +131,10 @@ async def _serve_artefact(session: SessionDep, event_id: str, kind: str) -> File
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no {kind} stored for this event")
 
     path = Path(raw)
-    if not path.is_file():
+    # Off the event loop: evidence often lives on slow or network-backed
+    # storage, and a stat that blocks here stalls every other request the node
+    # is serving, including live alert delivery.
+    if not await asyncio.to_thread(path.is_file):
         # The row outlives the file when retention has pruned the artefact.
         raise HTTPException(
             status.HTTP_410_GONE, f"{kind} was removed by the retention policy"

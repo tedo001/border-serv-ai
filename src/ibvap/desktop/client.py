@@ -8,7 +8,8 @@ signal/slot mechanics carry both HTTP replies and WebSocket frames.
 from __future__ import annotations
 
 import json
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from PyQt6.QtCore import QObject, QTimer, QUrl, pyqtSignal
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest

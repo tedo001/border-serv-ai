@@ -1,0 +1,87 @@
+# Alerting rules for an IBVAP deployment.
+#
+# These watch the *platform*, not the border: a camera that has silently
+# stopped delivering frames is invisible to the analytics but obvious here.
+
+groups:
+  - name: ibvap-availability
+    rules:
+      - alert: CameraOffline
+        expr: ibvap_camera_up == 0
+        for: 2m
+        labels: { severity: warning }
+        annotations:
+          summary: "Camera {{ $labels.camera }} at {{ $labels.site }} is offline"
+          description: >
+            No frames for over two minutes. Check power, the network path and
+            the NVR before assuming a hardware fault.
+
+      - alert: NodeDown
+        expr: up{job="ibvap"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "IBVAP node {{ $labels.instance }} is unreachable"
+
+  - name: ibvap-performance
+    rules:
+      - alert: AnalyticsFallingBehind
+        expr: rate(ibvap_frames_dropped_total{reason="queue_full"}[5m]) > 1
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Analytics is dropping frames on {{ $labels.camera }}"
+          description: >
+            The node cannot keep up. Reduce target_fps, raise detect_interval,
+            or move cameras to another node. Alert latency is unaffected -
+            frames are dropped rather than queued - but coverage is reduced.
+
+      - alert: HighInferenceLatency
+        expr: histogram_quantile(0.95, rate(ibvap_inference_latency_seconds_bucket[5m])) > 0.5
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "p95 inference latency above 500 ms on {{ $labels.site }}"
+
+  - name: ibvap-delivery
+    rules:
+      - alert: C2DeliveryFailing
+        expr: rate(ibvap_delivery_attempts_total{outcome="failure"}[10m]) > 0.1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Alert delivery to {{ $labels.sink }} is failing"
+          description: >
+            Events are being persisted to the outbox and will replay when the
+            link returns. Investigate if this persists beyond an expected outage.
+
+      - alert: OutboxBacklogGrowing
+        expr: ibvap_outbox_depth > 5000
+        for: 30m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.sink }} outbox has {{ $value }} undelivered events"
+          description: >
+            The uplink has been down long enough to risk the outbox cap, past
+            which the oldest undelivered alerts are discarded.
+
+  - name: ibvap-integrity
+    rules:
+      - alert: CameraTamperSuspected
+        expr: increase(ibvap_events_total{type="camera_tamper"}[10m]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Tamper suspected on {{ $labels.camera }} at {{ $labels.site }}"
+          description: >
+            The lens may be covered, defocused or the camera re-aimed. The
+            stream is still up, so availability checks will not show this.
+
+      - alert: RunningDegradedDetection
+        expr: ibvap_model_info{role="detector", backend="motion_fallback"} == 1
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.site }} is running classical fallback detection"
+          description: >
+            Model artefacts are missing or failed verification. The node is
+            still watching, but accuracy is materially reduced.

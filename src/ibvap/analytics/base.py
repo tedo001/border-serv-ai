@@ -16,8 +16,9 @@ every camera in the deployment.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Callable, ClassVar, Iterable
+from typing import Any, ClassVar
 
 from ibvap.core.config import RuleConfig
 from ibvap.core.errors import AnalyticsError

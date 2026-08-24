@@ -10,7 +10,8 @@ from __future__ import annotations
 import hashlib
 import secrets
 import time
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 from sqlalchemy import delete, func, select, update
@@ -270,7 +271,7 @@ class OutboxRepository:
                 .order_by(OutboxRecord.created_at.asc())
                 .limit(excess)
             )
-            ids = [row for row in oldest.scalars().all()]
+            ids = list(oldest.scalars().all())
             if ids:
                 await self.session.execute(
                     delete(OutboxRecord).where(OutboxRecord.id.in_(ids))

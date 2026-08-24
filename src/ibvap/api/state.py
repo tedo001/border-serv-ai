@@ -11,17 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-import numpy as np
-
-from ibvap.core.config import Settings
-from ibvap.core.logging import get_logger
-from ibvap.core.types import Event, Frame, Track
-from ibvap.events.evidence import EvidenceStore
-from ibvap.integrations.dispatcher import EventDispatcher
-from ibvap.mlops.registry import ModelRegistry
-from ibvap.pipeline.supervisor import Supervisor
 from ibvap.api.security import (
     LoginThrottle,
     Role,
@@ -29,6 +21,13 @@ from ibvap.api.security import (
     generate_password,
     hash_password,
 )
+from ibvap.core.config import Settings
+from ibvap.core.logging import get_logger
+from ibvap.core.types import Event, Frame, Track
+from ibvap.events.evidence import EvidenceStore
+from ibvap.integrations.dispatcher import EventDispatcher
+from ibvap.mlops.registry import ModelRegistry
+from ibvap.pipeline.supervisor import Supervisor
 from ibvap.storage.database import Database
 from ibvap.storage.repository import (
     EventRepository,

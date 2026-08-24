@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PyQt6.QtWidgets import (
     QFrame,

@@ -105,10 +105,12 @@ def polygon_centroid(polygon: np.ndarray) -> Point:
 class CrossingDirection(str, Enum):
     """Which way an object traversed a tripwire.
 
-    Directions are expressed relative to the wire's own orientation ``A -> B``:
-    ``LEFT`` means the object moved from the right-hand side of ``A -> B`` to
-    the left-hand side. Deployments give these neutral names domain meaning in
-    rule configuration (e.g. left = ``infiltration``, right = ``exfiltration``).
+    The two senses are anchored to what an operator sees on screen: ``LEFT`` is
+    a traversal in the direction of the arrow the console draws for a wire
+    configured ``direction: left`` - that is, along the left-hand normal of
+    ``A -> B``. ``RIGHT`` is the opposite traversal. Deployments give these
+    neutral names domain meaning through ``left_label`` and ``right_label``
+    (e.g. left = ``infiltration``, right = ``exfiltration``).
     """
 
     NONE = "none"
@@ -118,10 +120,21 @@ class CrossingDirection(str, Enum):
 
 
 def side_of_line(a: Point, b: Point, p: Point) -> float:
-    """Signed cross product of ``AB`` and ``AP``.
+    """Signed 2-D cross product of ``AB`` and ``AP``.
 
-    Positive when ``p`` lies to the left of the directed line ``A -> B``,
-    negative to the right, zero when collinear.
+    The *sign* identifies which of the two half-planes of the directed line
+    ``A -> B`` contains ``p``; zero means collinear. Only the sign and its
+    changes are meaningful, which is all :meth:`Tripwire.crossing` uses.
+
+    Note that these are image coordinates, with ``y`` increasing *downward*.
+    That inverts the handedness relative to the usual mathematical convention,
+    so this function deliberately does not label either half-plane "left" or
+    "right" - doing so is the sort of detail that reads correctly, is wrong,
+    and quietly inverts an operator's fence direction.
+
+    The operator-facing sense is defined by :class:`CrossingDirection` and is
+    anchored to what the console draws: ``LEFT`` is the direction the arrow
+    points for a wire configured ``direction: left``.
     """
     return (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
 
