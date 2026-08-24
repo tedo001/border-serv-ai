@@ -44,10 +44,14 @@ dependencies = [
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-cov", "ruff", "mypy", "types-PyYAML"]
 export = ["torch>=2.2", "ultralytics>=8.2", "onnx>=1.16", "onnxsim"]
 gpu = ["onnxruntime-gpu>=1.17"]
+desktop = ["PyQt6>=6.6"]
 postgres = ["psycopg[binary]>=3.1"]
 
 [project.scripts]
 ibvap = "ibvap.cli:main"
+
+[project.gui-scripts]
+ibvap-console = "ibvap.desktop.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
