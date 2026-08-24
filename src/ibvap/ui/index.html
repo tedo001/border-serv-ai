@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IBVAP Operator Console</title>
+<link rel="stylesheet" href="/static/console.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+</head>
+<body>
+<div id="login" class="login-screen">
+  <form id="login-form" class="login-card">
+    <h1>IBVAP</h1>
+    <p class="subtitle">Intelligent Border Video Analytics Platform</p>
+    <label for="username">Username</label>
+    <input id="username" name="username" autocomplete="username" required autofocus>
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit">Sign in</button>
+    <p id="login-error" class="error" role="alert"></p>
+  </form>
+</div>
+
+<div id="app" hidden>
+  <header class="topbar">
+    <div class="brand">
+      <span class="shield">IBVAP</span>
+      <span id="site-name" class="site"></span>
+    </div>
+    <nav class="tabs">
+      <button class="tab active" data-view="wall">Video wall</button>
+      <button class="tab" data-view="alerts">Alerts</button>
+      <button class="tab" data-view="watchlists">Watchlists</button>
+      <button class="tab" data-view="system">System</button>
+    </nav>
+    <div class="status-cluster">
+      <span id="link-state" class="pill pill-muted">connecting</span>
+      <span id="health-state" class="pill pill-muted">—</span>
+      <span id="user-name" class="user"></span>
+      <button id="logout" class="ghost">Sign out</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="view-wall" class="view active">
+      <div class="toolbar">
+        <label>Grid
+          <select id="grid-size">
+            <option value="1">1 x 1</option>
+            <option value="2" selected>2 x 2</option>
+            <option value="3">3 x 3</option>
+            <option value="4">4 x 4</option>
+          </select>
+        </label>
+        <label><input type="checkbox" id="show-overlays" checked> Overlays</label>
+        <span class="spacer"></span>
+        <span id="wall-summary" class="muted"></span>
+      </div>
+      <div id="camera-grid" class="camera-grid cols-2"></div>
+    </section>
+
+    <section id="view-alerts" class="view">
+      <div class="toolbar">
+        <label>Severity
+          <select id="filter-severity">
+            <option value="">all</option>
+            <option value="low">low and above</option>
+            <option value="medium" selected>medium and above</option>
+            <option value="high">high and above</option>
+            <option value="critical">critical only</option>
+          </select>
+        </label>
+        <label>Camera <select id="filter-camera"><option value="">all</option></select></label>
+        <label><input type="checkbox" id="filter-unack"> Unacknowledged only</label>
+        <input id="filter-search" type="search" placeholder="Search messages…">
+        <span class="spacer"></span>
+        <button id="refresh-alerts" class="ghost">Refresh</button>
+      </div>
+      <div class="alerts-layout">
+        <ul id="alert-list" class="alert-list"></ul>
+        <aside id="alert-detail" class="alert-detail"><p class="muted">Select an alert to view evidence.</p></aside>
+      </div>
+    </section>
+
+    <section id="view-watchlists" class="view">
+      <div class="watchlist-grid">
+        <div class="panel">
+          <h2>Vehicle registrations</h2>
+          <form id="plate-form" class="inline-form">
+            <input id="plate-value" placeholder="MH12AB1234" required maxlength="24">
+            <select id="plate-category">
+              <option value="wanted">wanted</option>
+              <option value="stolen">stolen</option>
+              <option value="suspect">suspect</option>
+              <option value="banned">banned</option>
+              <option value="permitted">permitted</option>
+            </select>
+            <input id="plate-reference" placeholder="Case reference" maxlength="128">
+            <button type="submit">Add</button>
+          </form>
+          <p id="plate-error" class="error"></p>
+          <table class="data-table"><thead><tr>
+            <th>Plate</th><th>Category</th><th>Reference</th><th>Added by</th><th></th>
+          </tr></thead><tbody id="plate-rows"></tbody></table>
+        </div>
+        <div class="panel">
+          <h2>Face identities</h2>
+          <p class="muted small">Enrolment requires supervisor authority and is recorded in the audit log.</p>
+          <table class="data-table"><thead><tr>
+            <th>ID</th><th>Name</th><th>Category</th><th>Views</th><th>Added by</th><th></th>
+          </tr></thead><tbody id="face-rows"></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-system" class="view">
+      <div class="stat-row" id="stat-row"></div>
+      <div class="watchlist-grid">
+        <div class="panel">
+          <h2>Cameras</h2>
+          <table class="data-table"><thead><tr>
+            <th>Camera</th><th>State</th><th>FPS</th><th>Latency</th><th>Detector</th><th>Frames</th>
+          </tr></thead><tbody id="camera-rows"></tbody></table>
+        </div>
+        <div class="panel">
+          <h2>Models</h2>
+          <div id="model-info"></div>
+          <h2>Event summary (24 h)</h2>
+          <div id="event-summary"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="/static/console.js"></script>
+</body>
+</html>
