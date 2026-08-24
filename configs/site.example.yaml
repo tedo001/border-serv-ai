@@ -1,0 +1,175 @@
+# IBVAP site configuration — example for a Border Out Post.
+#
+# Copy to configs/site.yaml and adapt. Secrets are NOT stored here: this file
+# gets copied between posts on removable media and attached to tickets. Inject
+# them through the environment instead (see docs/DEPLOYMENT.md).
+
+site_id: bop-ranipur
+site_name: BOP Ranipur
+tier: edge                       # edge = analytics next to the cameras
+
+api:
+  host: 0.0.0.0
+  port: 8080
+  serve_ui: true
+  max_preview_clients: 8
+
+security:
+  # jwt_secret comes from IBVAP_SECURITY__JWT_SECRET — generate with `ibvap secret`
+  require_auth: true
+  access_token_ttl_minutes: 60
+  max_login_attempts: 5
+  cors_origins: ["http://localhost:8080"]
+
+storage:
+  database_url: sqlite+aiosqlite:///data/ibvap.db
+  event_retention_days: 180
+
+models:
+  registry_path: models/registry.yaml
+  models_dir: models
+  # Unavailable providers are skipped at load time, so one site file serves
+  # both GPU sector nodes and CPU-only BOP nodes.
+  providers: [CUDAExecutionProvider, CPUExecutionProvider]
+  allow_stub_fallback: true      # keep watching even if artefacts are missing
+  detector:
+    name: yolo26s-border
+    version: latest
+    score_threshold: 0.35
+  plate_detector: { name: plate-detector, score_threshold: 0.4 }
+  plate_ocr: { name: plate-ocr }
+  face_detector: { name: face-detector, score_threshold: 0.6 }
+  face_embedder: { name: face-embedder }
+
+pipeline:
+  queue_size: 4
+  overflow_policy: drop_oldest   # keeps alert latency flat under load
+  reconnect_min_seconds: 2.0
+  reconnect_max_seconds: 60.0
+  offline_after_seconds: 30.0
+
+tracker:
+  min_hits: 3
+  max_age: 30
+  match_iou: 0.2
+
+analytics:
+  # Stray cattle are the single largest source of false intrusion alarms on
+  # rural border fences. Suppressing them by class is the highest-value knob here.
+  ignore_classes: [animal]
+  min_object_height_fraction: 0.02
+  night_luma_threshold: 60
+  dedup_window_seconds: 20
+  max_events_per_camera_per_minute: 60
+
+evidence:
+  enabled: true
+  directory: data/evidence
+  snapshot: true
+  clip: true
+  clip_pre_seconds: 4
+  retention_days: 30
+  max_bytes: 53687091200         # 50 GB
+
+privacy:
+  blur_unmatched_faces: false
+  store_only_watchlist_faces: true
+  audit_biometric_matches: true
+
+integrations:
+  store_and_forward: true        # essential where the uplink is intermittent
+  outbox_flush_interval_seconds: 15
+  webhooks:
+    - name: sector-c2
+      url: https://sector-control.example/api/alerts
+      min_severity: medium
+      # hmac_secret comes from the environment
+  mqtt:
+    enabled: false
+    host: sector-broker.example
+    topic_prefix: ibvap/events
+  syslog:
+    enabled: false
+    host: siem.example
+    protocol: tcp
+
+telemetry:
+  prometheus_enabled: true
+  log_level: INFO
+  log_format: json
+  log_file: var/log/ibvap.log
+
+cameras:
+  - id: cam-north
+    name: North Tower
+    url: rtsp://10.20.0.11:554/Streaming/Channels/101
+    location: BOP Ranipur — North Tower
+    latitude: 26.9124
+    longitude: 88.4270
+    bearing: 350
+    target_fps: 8
+    process_width: 960
+    rtsp_transport: tcp
+    zones:
+      - id: fence-strip
+        name: Fence Strip
+        points: [[0.35, 0.30], [1.00, 0.30], [1.00, 1.00], [0.35, 1.00]]
+    tripwires:
+      - id: fence-line
+        name: Fence Line
+        start: [0.50, 0.10]
+        end:   [0.50, 0.95]
+        direction: any
+        left_label: exfiltration
+        right_label: infiltration
+    rules:
+      - id: fence-intrusion
+        type: intrusion
+        zones: [fence-strip]
+        classes: [person, car, truck, motorcycle]
+        severity: high
+        cooldown_seconds: 30
+        params: { confirm_frames: 3 }
+      - id: fence-crossing
+        type: line_crossing
+        tripwires: [fence-line]
+        severity: critical
+        cooldown_seconds: 20
+      - id: night-watch
+        type: night_movement
+        active_hours: ["18:00-06:00"]
+        params: { min_speed: 0.02, confirm_frames: 3, require_dark: true }
+      - id: loitering
+        type: loitering
+        zones: [fence-strip]
+        params: { dwell_seconds: 45, max_displacement: 0.15 }
+      - id: tamper
+        type: camera_tamper
+        params: { confirm_frames: 15, warmup_frames: 30 }
+
+  - id: cam-gate
+    name: Main Gate
+    url: rtsp://10.20.0.12:554/Streaming/Channels/101
+    location: BOP Ranipur — Main Gate
+    target_fps: 10
+    anpr_enabled: true            # vehicle approach: read plates
+    face_enabled: true            # check post: identify people
+    rules:
+      - id: gate-presence
+        type: presence
+      - id: gate-crowd
+        type: crowd_gathering
+        params: { min_people: 6, confirm_frames: 5, cluster_radius: 0.2 }
+
+  - id: cam-road
+    name: Border Road KM-12
+    url: rtsp://10.20.0.13:554/Streaming/Channels/101
+    target_fps: 6
+    anpr_enabled: true
+    rules:
+      - id: road-vehicles
+        type: presence
+        classes: [car, truck, bus, motorcycle]
+      - id: road-speeding
+        type: rapid_movement
+        params: { speed_threshold: 0.45, confirm_frames: 3 }

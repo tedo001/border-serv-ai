@@ -1,0 +1,146 @@
+# IBVAP model registry
+# ====================
+#
+# Every model the platform runs is declared here with an explicit version, a
+# SHA-256 checksum, its output layout and its class list. Nothing is inferred
+# from a filename, and an artefact whose checksum does not match will not load.
+#
+# The entries below are the DECLARATIONS for a standard deployment. The .onnx
+# artefacts themselves are not in version control — they are produced by
+# `ibvap models export` and distributed with the site build. A node whose
+# artefacts are absent falls back to classical detection and reports itself as
+# degraded through /health and the operator console; it does not fail to start.
+#
+# To populate this registry:
+#
+#   ibvap models export yolo26s.pt -o models/detector/yolo26s-border-1.0.0.onnx \
+#       --family yolo26 --imgsz 640 \
+#       --register yolo26s-border:1.0.0 --card docs/model-cards/yolo26s-border.md
+#
+# `export` writes the real checksum and class list into this file; the values
+# below are placeholders and will be replaced.
+#
+# Output layouts:
+#   yolo26     end-to-end, NMS-free head — RECOMMENDED for new deployments
+#   yolov8     v8/v9/v10/v11 transposed head (4+nc, anchors)
+#   yolov5     v5/v7 head (anchors, 5+nc) with objectness
+#   nms_xyxy   any export with NMS folded into the graph, (N, 6) xyxy
+#   auto       inferred from tensor shape — convenience only, prefer explicit
+
+version: 1
+
+models:
+
+  # --- object detection ----------------------------------------------------
+  yolo26s-border:
+    role: detector
+    description: >
+      YOLO26-S fine-tuned for border surveillance: people, vehicles and
+      livestock in fixed CCTV views, day and IR night.
+      End-to-end (NMS-free), which removes the CPU-side suppression pass —
+      a real saving on an edge node carrying many cameras on few cores.
+    default: "1.0.0"
+    versions:
+      "1.0.0":
+        file: detector/yolo26s-border-1.0.0.onnx
+        sha256: ""              # written by `ibvap models export`
+        layout: yolo26
+        input_size: [640, 640]
+        classes:
+          - person
+          - bicycle
+          - motorcycle
+          - car
+          - bus
+          - truck
+          - boat
+          - cow                 # mapped to the ANIMAL class; suppressible by rule
+          - backpack            # mapped to BAG, for abandoned-object detection
+        metrics: {}             # populated by `ibvap evaluate`
+        provenance:
+          family: yolo26
+          end_to_end: true
+        notes: >
+          Recommended default. Verify accuracy against a labelled set from a
+          representative site before commissioning.
+        enabled: true
+
+  yolo11s-border:
+    role: detector
+    description: >
+      YOLO11-S alternative for hardware or runtimes where the end-to-end
+      YOLO26 graph is unsupported. Standard v8-style head, so the platform
+      runs its own NMS.
+    default: "1.0.0"
+    versions:
+      "1.0.0":
+        file: detector/yolo11s-border-1.0.0.onnx
+        sha256: ""
+        layout: yolov8
+        input_size: [640, 640]
+        classes: [person, bicycle, motorcycle, car, bus, truck, boat, cow, backpack]
+        metrics: {}
+        provenance:
+          family: yolo11
+          end_to_end: false
+        enabled: true
+
+  # --- ANPR ----------------------------------------------------------------
+  plate-detector:
+    role: plate_detector
+    description: Single-class plate localiser, run inside vehicle crops.
+    default: "1.0.0"
+    versions:
+      "1.0.0":
+        file: anpr/plate-detector-1.0.0.onnx
+        sha256: ""
+        layout: yolov8
+        input_size: [640, 640]
+        classes: [plate]
+        enabled: true
+
+  plate-ocr:
+    role: plate_ocr
+    description: >
+      CRNN plate reader with CTC decoding. Its raw output is passed through
+      the Indian number-plate grammar, which resolves the glyph/digit
+      confusions that account for nearly all real ANPR errors.
+    default: "1.0.0"
+    versions:
+      "1.0.0":
+        file: anpr/plate-ocr-1.0.0.onnx
+        sha256: ""
+        layout: auto
+        input_size: [160, 48]
+        classes: []             # charset is defined in ibvap.vision.anpr
+        enabled: true
+
+  # --- face recognition ----------------------------------------------------
+  face-detector:
+    role: face_detector
+    description: Single-class face detector, run within tracked person boxes.
+    default: "1.0.0"
+    versions:
+      "1.0.0":
+        file: face/face-detector-1.0.0.onnx
+        sha256: ""
+        layout: yolov8
+        input_size: [640, 640]
+        classes: [face]
+        enabled: true
+
+  face-embedder:
+    role: face_embedder
+    description: >
+      ArcFace-style 512-d embedder over 112x112 aligned crops. Matching
+      requires both a similarity threshold and a margin over the runner-up,
+      so an ambiguous face is rejected rather than named.
+    default: "1.0.0"
+    versions:
+      "1.0.0":
+        file: face/face-embedder-1.0.0.onnx
+        sha256: ""
+        layout: auto
+        input_size: [112, 112]
+        classes: []
+        enabled: true
