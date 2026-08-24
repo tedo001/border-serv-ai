@@ -612,3 +612,113 @@ class PlateReader:
                 plate_crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC
             )
         return plate_crop
+
+
+# --------------------------------------------------------------------------- #
+# Plate watchlist
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(slots=True)
+class PlateWatchEntry:
+    """A registration of interest and why it is being watched."""
+
+    plate: str
+    #: Operator-facing category: ``wanted``, ``stolen``, ``permitted``, ...
+    category: str = "wanted"
+    reason: str = ""
+    #: Reference to the originating case file or intelligence report.
+    reference: str = ""
+    added_at: float = 0.0
+
+
+@dataclass(slots=True)
+class PlateWatchHit:
+    """A watchlist match against a read plate."""
+
+    entry: PlateWatchEntry
+    reading: PlateReading
+    #: Character edits between the read plate and the watchlist entry.
+    distance: int = 0
+    #: True when the plate matched exactly rather than fuzzily.
+    exact: bool = True
+
+
+class PlateWatchlist:
+    """Registrations of interest, with optional fuzzy matching.
+
+    Fuzzy matching is off by default. It is genuinely useful at long range,
+    where one glyph is routinely lost - but each additional edit of tolerance
+    multiplies the space of registrations that can collide, and a false hit
+    here stops the wrong vehicle. One edit is the most that can be justified,
+    and only when the read is otherwise clean.
+    """
+
+    def __init__(self, *, max_distance: int = 0, min_confidence: float = 0.5) -> None:
+        self.max_distance = max_distance
+        self.min_confidence = min_confidence
+        self._entries: dict[str, PlateWatchEntry] = {}
+
+    def add(
+        self,
+        plate: str,
+        *,
+        category: str = "wanted",
+        reason: str = "",
+        reference: str = "",
+    ) -> PlateWatchEntry:
+        """Add or replace a watchlist registration.
+
+        The plate is normalised through the same grammar as a live read, so a
+        mistyped entry cannot sit in the list never matching anything.
+        """
+        normalised = normalise_plate(plate, 1.0)
+        key = normalised.text or _ALNUM_RE.sub("", plate.upper())
+        entry = PlateWatchEntry(
+            plate=key, category=category, reason=reason, reference=reference
+        )
+        self._entries[key] = entry
+        return entry
+
+    def remove(self, plate: str) -> bool:
+        key = normalise_plate(plate, 1.0).text or _ALNUM_RE.sub("", plate.upper())
+        return self._entries.pop(key, None) is not None
+
+    def clear(self) -> None:
+        self._entries.clear()
+
+    @property
+    def size(self) -> int:
+        return len(self._entries)
+
+    def entries(self) -> list[PlateWatchEntry]:
+        return list(self._entries.values())
+
+    def check(self, reading: PlateReading) -> PlateWatchHit | None:
+        """Test a read against the watchlist.
+
+        Only actionable reads are tested. Matching a grammatically invalid or
+        low-confidence read risks flagging a vehicle whose registration was
+        never actually established.
+        """
+        if not reading.is_actionable or reading.confidence < self.min_confidence:
+            return None
+
+        exact = self._entries.get(reading.text)
+        if exact is not None:
+            return PlateWatchHit(entry=exact, reading=reading, distance=0, exact=True)
+
+        if self.max_distance <= 0:
+            return None
+
+        best: tuple[int, PlateWatchEntry] | None = None
+        for key, entry in self._entries.items():
+            if abs(len(key) - len(reading.text)) > self.max_distance:
+                continue
+            distance = _levenshtein(key, reading.text)
+            if distance <= self.max_distance and (best is None or distance < best[0]):
+                best = (distance, entry)
+
+        if best is None:
+            return None
+        return PlateWatchHit(entry=best[1], reading=reading, distance=best[0], exact=False)
