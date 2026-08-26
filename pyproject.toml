@@ -84,6 +84,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# The report generator is dense presentation code: table literals and style
+# tuples read better as aligned rows than wrapped to 110 columns.
+"scripts/generate_test_report.py" = ["E501"]
 # Qt overrides are camelCase by the framework's contract, and Qt objects are
 # constructed in argument position throughout.
 "src/ibvap/desktop/*" = ["N802", "B008"]

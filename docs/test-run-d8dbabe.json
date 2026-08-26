@@ -1,0 +1,189 @@
+{
+ "byfile": {
+  "tests/integration/test_api/TestAuthentication.py": 6,
+  "tests/integration/test_api/TestRbac.py": 6,
+  "tests/integration/test_api/TestWatchlists.py": 5,
+  "tests/integration/test_api/TestEventsAndEvidence.py": 3,
+  "tests/integration/test_api/TestMediaTokens.py": 2,
+  "tests/integration/test_api/TestSystem.py": 5,
+  "tests/integration/test_pipeline/TestSupervisor.py": 5,
+  "tests/unit/test_analytics/TestIntrusion.py": 5,
+  "tests/unit/test_analytics/TestLineCrossing.py": 2,
+  "tests/unit/test_analytics/TestBehaviour.py": 5,
+  "tests/unit/test_analytics/TestSchedule.py": 1,
+  "tests/unit/test_analytics/TestTamper.py": 2,
+  "tests/unit/test_analytics/TestEventGate.py": 5,
+  "tests/unit/test_anpr/TestPlateNormalisation.py": 17,
+  "tests/unit/test_anpr/TestPlateMatching.py": 4,
+  "tests/unit/test_anpr/TestCtcDecode.py": 3,
+  "tests/unit/test_anpr/TestPlateWatchlist.py": 5,
+  "tests/unit/test_config/TestTaxonomy.py": 5,
+  "tests/unit/test_config/TestTimeWindows.py": 5,
+  "tests/unit/test_config/TestCameraValidation.py": 6,
+  "tests/unit/test_config/TestSettingsLoading.py": 8,
+  "tests/unit/test_evidence/TestCapture.py": 4,
+  "tests/unit/test_evidence/TestChainOfCustody.py": 6,
+  "tests/unit/test_evidence/TestRetention.py": 3,
+  "tests/unit/test_evidence/TestDisabled.py": 1,
+  "tests/unit/test_geometry/TestPolygons.py": 5,
+  "tests/unit/test_geometry/TestZone.py": 2,
+  "tests/unit/test_geometry/TestTripwire.py": 5,
+  "tests/unit/test_geometry/TestSegments.py": 2,
+  "tests/unit/test_geometry/TestDirectionMatchesRenderedArrow.py": 3,
+  "tests/unit/test_integrations/TestPayload.py": 3,
+  "tests/unit/test_integrations/TestSinkFiltering.py": 3,
+  "tests/unit/test_integrations/TestWebhookSigning.py": 6,
+  "tests/unit/test_integrations/TestCef.py": 5,
+  "tests/unit/test_integrations/TestRetryBackoff.py": 1,
+  "tests/unit/test_mlops/TestRegistry.py": 10,
+  "tests/unit/test_mlops/TestModelCard.py": 2,
+  "tests/unit/test_mlops/TestBenchmark.py": 3,
+  "tests/unit/test_mlops/TestDetectionEvaluation.py": 6,
+  "tests/unit/test_mlops/TestAnprEvaluation.py": 2,
+  "tests/unit/test_mlops/TestFaceEvaluation.py": 1,
+  "tests/unit/test_mlops/TestDrift.py": 7,
+  "tests/unit/test_security/TestRoles.py": 2,
+  "tests/unit/test_security/TestPasswords.py": 6,
+  "tests/unit/test_security/TestTokens.py": 8,
+  "tests/unit/test_security/TestLoginThrottle.py": 3,
+  "tests/unit/test_tracker/TestKalman.py": 1,
+  "tests/unit/test_tracker/TestIdentityStability.py": 8,
+  "tests/unit/test_tracker/TestAssociation.py": 5,
+  "tests/unit/test_tracker/TestTrackGeometry.py": 3,
+  "tests/unit/test_vision/TestNms.py": 4,
+  "tests/unit/test_vision/TestLetterbox.py": 3,
+  "tests/unit/test_vision/TestDetectorLayouts.py": 6,
+  "tests/unit/test_vision/TestMotionFallback.py": 4,
+  "tests/unit/test_vision/TestNightHandling.py": 3,
+  "tests/unit/test_vision/TestFaceGallery.py": 6
+ },
+ "byclass": {
+  "tests.integration.test_api.TestAuthentication": 6,
+  "tests.integration.test_api.TestRbac": 6,
+  "tests.integration.test_api.TestWatchlists": 5,
+  "tests.integration.test_api.TestEventsAndEvidence": 3,
+  "tests.integration.test_api.TestMediaTokens": 2,
+  "tests.integration.test_api.TestSystem": 5,
+  "tests.integration.test_pipeline.TestSupervisor": 5,
+  "tests.unit.test_analytics.TestIntrusion": 5,
+  "tests.unit.test_analytics.TestLineCrossing": 2,
+  "tests.unit.test_analytics.TestBehaviour": 5,
+  "tests.unit.test_analytics.TestSchedule": 1,
+  "tests.unit.test_analytics.TestTamper": 2,
+  "tests.unit.test_analytics.TestEventGate": 5,
+  "tests.unit.test_anpr.TestPlateNormalisation": 17,
+  "tests.unit.test_anpr.TestPlateMatching": 4,
+  "tests.unit.test_anpr.TestCtcDecode": 3,
+  "tests.unit.test_anpr.TestPlateWatchlist": 5,
+  "tests.unit.test_config.TestTaxonomy": 5,
+  "tests.unit.test_config.TestTimeWindows": 5,
+  "tests.unit.test_config.TestCameraValidation": 6,
+  "tests.unit.test_config.TestSettingsLoading": 8,
+  "tests.unit.test_evidence.TestCapture": 4,
+  "tests.unit.test_evidence.TestChainOfCustody": 6,
+  "tests.unit.test_evidence.TestRetention": 3,
+  "tests.unit.test_evidence.TestDisabled": 1,
+  "tests.unit.test_geometry.TestPolygons": 5,
+  "tests.unit.test_geometry.TestZone": 2,
+  "tests.unit.test_geometry.TestTripwire": 5,
+  "tests.unit.test_geometry.TestSegments": 2,
+  "tests.unit.test_geometry.TestDirectionMatchesRenderedArrow": 3,
+  "tests.unit.test_integrations.TestPayload": 3,
+  "tests.unit.test_integrations.TestSinkFiltering": 3,
+  "tests.unit.test_integrations.TestWebhookSigning": 6,
+  "tests.unit.test_integrations.TestCef": 5,
+  "tests.unit.test_integrations.TestRetryBackoff": 1,
+  "tests.unit.test_mlops.TestRegistry": 10,
+  "tests.unit.test_mlops.TestModelCard": 2,
+  "tests.unit.test_mlops.TestBenchmark": 3,
+  "tests.unit.test_mlops.TestDetectionEvaluation": 6,
+  "tests.unit.test_mlops.TestAnprEvaluation": 2,
+  "tests.unit.test_mlops.TestFaceEvaluation": 1,
+  "tests.unit.test_mlops.TestDrift": 7,
+  "tests.unit.test_security.TestRoles": 2,
+  "tests.unit.test_security.TestPasswords": 6,
+  "tests.unit.test_security.TestTokens": 8,
+  "tests.unit.test_security.TestLoginThrottle": 3,
+  "tests.unit.test_tracker.TestKalman": 1,
+  "tests.unit.test_tracker.TestIdentityStability": 8,
+  "tests.unit.test_tracker.TestAssociation": 5,
+  "tests.unit.test_tracker.TestTrackGeometry": 3,
+  "tests.unit.test_vision.TestNms": 4,
+  "tests.unit.test_vision.TestLetterbox": 3,
+  "tests.unit.test_vision.TestDetectorLayouts": 6,
+  "tests.unit.test_vision.TestMotionFallback": 4,
+  "tests.unit.test_vision.TestNightHandling": 3,
+  "tests.unit.test_vision.TestFaceGallery": 6
+ },
+ "groups": {
+  "root": [
+   291,
+   2
+  ],
+  "analytics": [
+   580,
+   482
+  ],
+  "api": [
+   1188,
+   842
+  ],
+  "core": [
+   764,
+   702
+  ],
+  "desktop": [
+   1125,
+   0
+  ],
+  "events": [
+   409,
+   328
+  ],
+  "ingest": [
+   354,
+   291
+  ],
+  "integrations": [
+   403,
+   241
+  ],
+  "mlops": [
+   679,
+   537
+  ],
+  "pipeline": [
+   436,
+   304
+  ],
+  "storage": [
+   460,
+   320
+  ],
+  "telemetry": [
+   89,
+   78
+  ],
+  "vision": [
+   1254,
+   911
+  ]
+ },
+ "totals": {
+  "covered_lines": 5038,
+  "num_statements": 8032,
+  "percent_covered": 62.72410358565737,
+  "percent_covered_display": "63",
+  "missing_lines": 2994,
+  "excluded_lines": 93,
+  "percent_statements_covered": 62.72410358565737,
+  "percent_statements_covered_display": "63"
+ },
+ "suite": {
+  "tests": "247",
+  "failures": "0",
+  "errors": "0",
+  "skipped": "0",
+  "time": "82.075"
+ }
+}
