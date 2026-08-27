@@ -61,6 +61,12 @@ ibvap = ["ui/*.html", "ui/*.css", "ui/*.js", "py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Put the repository root on sys.path so `from tests.conftest import ...`
+# resolves. Without this the suite only passes when pytest is invoked as
+# `python -m pytest` (which adds the CWD implicitly) and fails under the
+# `pytest` console script that CI uses - a difference that silently hid a
+# collection error from every local run.
+pythonpath = ["."]
 asyncio_mode = "auto"
 filterwarnings = ["ignore::DeprecationWarning"]
 markers = [
