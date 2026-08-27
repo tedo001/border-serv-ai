@@ -27,6 +27,23 @@ Seema Bal (SSB), Police II Division.
 ## Quick start
 
 ```bash
+git clone https://github.com/tedo001/border-serv-ai
+cd border-serv-ai
+python app.py
+```
+
+That is the whole thing. `app.py` is standard-library only, so it runs on a bare
+checkout: it creates the virtual environment, installs the project, writes a
+working configuration with synthetic cameras, generates a signing key, starts
+the node and opens the console. A control panel window appears where a graphical
+toolkit is available, and a numbered text menu where it is not.
+
+Individual actions: `python app.py start | desktop | status | logs | test | stop`.
+
+<details>
+<summary>Or set it up by hand</summary>
+
+```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev,desktop]"
 
@@ -36,6 +53,8 @@ ibvap validate configs/site.yaml
 export IBVAP_SECURITY__JWT_SECRET=$(ibvap secret | cut -d= -f2)
 ibvap serve --config configs/site.yaml
 ```
+
+</details>
 
 Open <http://127.0.0.1:8080/>. The bootstrap admin password is printed once at
 startup.

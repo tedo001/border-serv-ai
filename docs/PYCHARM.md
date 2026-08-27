@@ -367,3 +367,69 @@ Restart the node. `/health` should now report `detector_mode: neural` and
 | Video tiles stay black | The camera is offline. Check the **System** tab, and run `ibvap probe <url>` |
 | PyQt window will not open on Linux | Install `libegl1 libxkbcommon-x11-0`, or set `QT_QPA_PLATFORM=offscreen` |
 | `401` on every API call | The token expired (60 min default). Sign in again |
+
+---
+
+## The shortcut: `app.py`
+
+Everything above is the explicit route, and worth doing once so you know what
+the pieces are. If you just want it running, the repository has a launcher that
+does all of it for you:
+
+```bash
+python app.py
+```
+
+On a machine with a graphical toolkit that opens a small control panel with a
+button per action. Without one (a headless server, a minimal container) it falls
+back to a numbered text menu. Both do the same things.
+
+It is standard-library only, so it runs on a bare checkout straight after
+`git clone` with nothing installed. On first run it creates `.venv`, installs
+the project, writes `configs/site.yaml` with three synthetic cameras, generates
+a signing key into `.env`, starts the node and opens the console.
+
+Individual actions can be run directly:
+
+```bash
+python app.py setup       # environment and dependencies only
+python app.py start       # start the node, open the console
+python app.py desktop     # native desktop console
+python app.py status      # is it running, and how is it doing
+python app.py logs        # tail the node log
+python app.py test        # run the suite
+python app.py stop
+```
+
+### As a PyCharm run configuration
+
+**Run → Edit Configurations… → `+` → Python**
+
+| Field | Value |
+|---|---|
+| **Name** | `IBVAP` |
+| **Run** | **Script path** → `app.py` |
+| **Parameters** | *(empty for the control panel, or an action such as `start`)* |
+| **Working directory** | the project root |
+
+No environment variables are needed — the launcher manages its own.
+
+### In Antigravity
+
+Open the cloned folder, then either:
+
+- open the built-in terminal and run `python app.py`, or
+- open `app.py` and use the editor's run action.
+
+The launcher does not care which IDE started it. It resolves every path
+relative to its own location, so it behaves the same from a terminal, from
+PyCharm, from Antigravity, or from a double-click in a file manager.
+
+### What it will not do
+
+It is a convenience for getting started, not a deployment mechanism. It always
+shells out to the same `ibvap` CLI documented elsewhere, and production
+deployments should use `ibvap serve` under systemd or the container image — see
+[`DEPLOYMENT.md`](DEPLOYMENT.md). The demonstration configuration it writes uses
+synthetic cameras and a known password, both of which must be replaced before
+the platform watches anything real.
