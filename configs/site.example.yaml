@@ -84,14 +84,6 @@ integrations:
       url: https://sector-control.example/api/alerts
       min_severity: medium
       # hmac_secret comes from the environment
-  mqtt:
-    enabled: false
-    host: sector-broker.example
-    topic_prefix: ibvap/events
-  syslog:
-    enabled: false
-    host: siem.example
-    protocol: tcp
 
 telemetry:
   prometheus_enabled: true

@@ -1,16 +1,15 @@
-"""C2 sinks: filtering, signing, CEF formatting and store-and-forward."""
+"""C2 delivery: sink filtering, webhook signing and store-and-forward."""
 
 from __future__ import annotations
 
 import json
 import time
 
-from ibvap.core.config import SyslogConfig, WebhookConfig
+from ibvap.core.config import WebhookConfig
 from ibvap.core.types import Event, EventType, Severity
 from ibvap.events.payload import PAYLOAD_SCHEMA_VERSION, event_to_payload, payload_summary
 from ibvap.integrations.base import Sink
 from ibvap.integrations.dispatcher import backoff_for
-from ibvap.integrations.syslog import escape_cef_value, format_cef
 from ibvap.integrations.webhook import (
     WebhookSink,
     verify_signature,
@@ -141,45 +140,6 @@ class TestWebhookSigning:
         assert status["kind"] == "webhook"
         assert status["signed"] is True
 
-
-class TestCef:
-    def test_well_formed_header(self) -> None:
-        message = format_cef(event_to_payload(
-            build_event(Severity.CRITICAL, EventType.PLATE_MATCH, plate="MH12AB1234"),
-            site_id="bop-1", site_name="BOP One", camera_name="Gate",
-        ))
-        assert message.startswith("CEF:0|IBVAP|Border Video Analytics|1.0|plate_match|")
-        assert message.split("|")[6] == "10"  # critical maps to CEF severity 10
-
-    def test_custom_slots_stay_within_the_standard(self) -> None:
-        """Inventing keys beyond cs1..cs6 is exactly what makes a CEF feed
-        need a custom parser."""
-        import re
-
-        message = format_cef(event_to_payload(build_event(
-            plate="MH12AB1234", person_id="P1", name="Subject", category="stolen",
-            object_class="truck",
-        )))
-        extension = message.split("|", 7)[7]
-        slots = re.findall(r"\bcs(\d)", extension)
-        assert slots and all(int(slot) <= 6 for slot in slots)
-
-    def test_escaping(self) -> None:
-        assert escape_cef_value("a=b\\c") == "a\\=b\\\\c"
-        assert "\n" not in escape_cef_value("line\nbreak")
-
-    def test_severity_mapping(self) -> None:
-        for severity, expected in (
-            (Severity.INFO, "2"), (Severity.MEDIUM, "5"), (Severity.CRITICAL, "10")
-        ):
-            message = format_cef(event_to_payload(build_event(severity)))
-            assert message.split("|")[6] == expected
-
-    def test_sink_status(self) -> None:
-        sink = __import__(
-            "ibvap.integrations.syslog", fromlist=["SyslogSink"]
-        ).SyslogSink(SyslogConfig(host="siem.example", port=514))
-        assert sink.status()["format"] == "CEF"
 
 
 class TestRetryBackoff:

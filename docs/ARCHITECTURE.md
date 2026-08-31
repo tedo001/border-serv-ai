@@ -1,6 +1,6 @@
 # IBVAP architecture
 
-## The problem this solves
+## The problem
 
 Border forces already have CCTV at out posts, check posts and along border
 roads. What they lack is anything that *watches* it: conventional systems
@@ -12,125 +12,228 @@ IBVAP is the software that turns those existing cameras into an intelligent
 sensor network. It ingests standard RTSP, runs the analytics itself, and raises
 alerts. No camera is replaced and no appliance is added.
 
-## Shape of the system
+---
+
+## The pipeline
+
+One `CameraWorker` owns one camera end to end. Frames flow left to right; each
+stage narrows the data and adds meaning.
 
 ```
-   IP cameras (RTSP)
-          │
-          ▼
-   ┌──────────────┐   decode at source rate, enqueue at analytics rate
-   │  StreamReader│   bounded queue, drop-oldest, reconnect w/ backoff
-   └──────┬───────┘
-          ▼
-   ┌──────────────┐   detector (strided) → tracker (every frame)
-   │ CameraWorker │   → ANPR / face (once per track) → rules
-   └──────┬───────┘
-          ▼
-   ┌──────────────┐   dedup · cooldown · rate limit
-   │AnalyticsEngine│
-   └──────┬───────┘
-          ▼
-   ┌──────────────┐        ┌───────────────┐
-   │EvidenceStore │◄───────┤   Event       ├────────► WebSocket (consoles)
-   │ snapshot+clip│        └───────┬───────┘
-   │ hash chain   │                ▼
-   └──────────────┘        ┌───────────────┐
-                           │  Dispatcher   │  store-and-forward outbox
-                           └───────┬───────┘
-                                   ▼
-                     webhook · MQTT · syslog/CEF  → command and control
+ ┌─────────────┐
+ │   SOURCE    │  RTSP · HTTP · file · sim://  (scenario simulator)
+ └──────┬──────┘
+        │  decode at source rate
+        ▼
+ ┌─────────────┐   Decode everything, enqueue a sample. An unread decoder
+ │  INGEST     │   buffer grows until its frames are seconds stale, so the
+ │ StreamReader│   reader pulls at full rate and samples into a small
+ └──────┬──────┘   bounded queue that overflows OLDEST-FIRST.
+        │  8 fps typical, 4-frame queue
+        ▼
+ ┌─────────────────────────────────────────────────────────────┐
+ │  DETECTION            where is something, and roughly what   │
+ │                                                              │
+ │   RT-DETR ─┐   set predictor, NMS-free, normalised cxcywh    │
+ │   YOLO26 ──┤   end-to-end head, NMS folded into the graph    │
+ │   YOLOv8 ──┤   transposed head, platform runs NMS            │
+ │   YOLOv5 ──┤   objectness × class score                      │
+ │   MOG2 ────┘   classical fallback when no artefact exists    │
+ └──────┬───────────────────────────────────────────────────────┘
+        │  boxes + coarse class + score
+        ▼
+ ┌─────────────────────────────────────────────────────────────┐
+ │  CLASSIFICATION       what is it really                      │
+ │  MobileNetV3 / ImageNet-1k over each new track's crop        │
+ │                                                              │
+ │  Runs ONCE PER TRACK, not per frame. Demotes and reclassifies │
+ │  only — never promotes to PERSON, because ImageNet-1k has no │
+ │  person class. Its value is the ~400 animal classes.         │
+ └──────┬───────────────────────────────────────────────────────┘
+        │  corrected class
+        ▼
+ ┌─────────────────────────────────────────────────────────────┐
+ │  TRACKING             which ones are the same object         │
+ │  ByteTrack-style: Kalman prediction + Hungarian association  │
+ │  Three passes — high-score IoU, low-score IoU recovery,      │
+ │  distance rescue for fast movers.                            │
+ └──────┬───────────────────────────────────────────────────────┘
+        │  stable track ids, trails, velocity
+        ├──────────────────────────┬──────────────────────────┐
+        ▼                          ▼                          ▼
+ ┌─────────────┐          ┌─────────────┐          ┌─────────────────┐
+ │ ANPR        │          │ FACE        │          │  ANALYTICS      │
+ │ locate →    │          │ detect →    │          │  10 rules over  │
+ │ deskew →    │          │ align →     │          │  zones, wires,  │
+ │ CRNN+CTC →  │          │ embed →     │          │  dwell, speed,  │
+ │ IND grammar │          │ gallery     │          │  schedule       │
+ └──────┬──────┘          └──────┬──────┘          └────────┬────────┘
+        └────────────────────────┴──────────────────────────┘
+                                 │  Events
+                                 ▼
+                    ┌────────────────────────┐
+                    │  EVENT GATE            │
+                    │  dedup · cooldown ·    │
+                    │  per-camera rate limit │
+                    └────────┬───────────────┘
+                             ▼
+        ┌────────────────────┴────────────────────┐
+        ▼                                         ▼
+ ┌──────────────┐                        ┌─────────────────┐
+ │  EVIDENCE    │                        │   DISPATCHER    │
+ │  snapshot +  │                        │  store-and-     │
+ │  clip, SHA-  │                        │  forward outbox │
+ │  256, daily  │                        └────────┬────────┘
+ │  hash chain  │                                 │
+ └──────────────┘                                 ▼
+                                       webhook (HMAC signed)  →  C2
+                                                  │
+                              WebSocket ──────────┴──→ browser + desktop consoles
 ```
 
-One `CameraWorker` per camera, isolated from the others. A `Supervisor` owns
-them all and is the single object the API, CLI and desktop console talk to.
+---
+
+## Model roles
+
+Every model is declared in `models/registry.yaml` with a version, a SHA-256
+checksum, its output layout and its class list. Nothing is inferred from a
+filename, and a checksum mismatch is fatal.
+
+| Role | Default | Job | Absent → |
+|---|---|---|---|
+| `detector` | YOLO26-S | Locate people, vehicles, animals, bags | MOG2 background subtraction |
+| `classifier` | MobileNetV3 (ImageNet-1k) | Refine the coarse class per track | Detector class used as-is |
+| `plate_detector` | single-class YOLO | Find plates inside vehicle crops | Morphological plate search |
+| `plate_ocr` | CRNN + CTC | Read plate glyphs | ANPR disabled |
+| `face_detector` | single-class YOLO | Find faces inside person crops | Haar cascade if available |
+| `face_embedder` | ArcFace-style 512-d | Embed for watchlist matching | Face recognition disabled |
+
+### Detector families
+
+| Layout | Output | Notes |
+|---|---|---|
+| `rtdetr` | `(queries, 4+nc)` | Set predictor. Boxes **normalised** cxcywh — scaled to input pixels before the letterbox inverse. No NMS. |
+| `yolo26` | `(N, 6)` xyxy | End-to-end head; NMS already applied inside the graph, so the platform skips it. |
+| `yolov8` | `(4+nc, anchors)` | v8/v9/v10/v11. Class scores, no objectness. Platform runs class-aware NMS. |
+| `yolov5` | `(anchors, 5+nc)` | Objectness × class score. |
+| `nms_xyxy` | `(N, 6)` xyxy | Any export with NMS folded in. |
+
+Two families need care and both fail *silently* if mishandled, which is why the
+layout is declared rather than guessed:
+
+- **RT-DETR boxes are normalised to `[0,1]`.** Decoded as YOLO pixels they
+  cluster in the top-left corner — plausible in a list, nonsense on screen.
+- **End-to-end heads have already suppressed duplicates.** Running NMS again
+  can only delete true positives, such as two people standing shoulder to
+  shoulder.
+
+### Why MobileNet earns a stage
+
+The detector gives a coarse class; MobileNet checks it. The case that pays for
+it is livestock.
+
+Stray cattle on a rural fence line are the largest single source of false
+intrusion alarms in this domain. `analytics.ignore_classes: [animal]` exists to
+suppress them — but suppression only works if the object is *classified* as an
+animal. The classical fallback classifies by bounding-box aspect ratio alone,
+so a cow (wide) reads as a car and is never suppressed.
+
+Measured on the `cattle` simulation scenario:
+
+| Configuration | Result |
+|---|---|
+| Fallback detector, `ignore_classes: [animal]` | **False intrusion alarm** — cow read as `car` |
+| Fallback + MobileNet classifier stage | **No alarm** — 27 tracks reclassified to `animal` |
+| Same settings, `intrusion` scenario (a person) | **Alarms correctly** |
+
+ImageNet-1k is a good fit here specifically because roughly 400 of its 1000
+classes are animals, in detail — ox, water buffalo, bison, ram, ibex.
+
+It is a poor fit for one thing, and the code enforces it: **ImageNet-1k has no
+person class**, so the stage may demote or reclassify but never promote to
+`PERSON`.
+
+---
 
 ## The decisions that shape everything else
 
-### Drop frames, never latency
+**Drop frames, never latency.** The queue is small and overflows oldest-first.
+A deep queue preserves every frame at the cost of alerting a minute late —
+which is not an alert, it is a historical record.
 
-The frame queue is small (default 4) and overflows **oldest-first**. A deep
-queue would preserve every frame at the cost of alerting on an intrusion a
-minute after it happened — which is not an alert, it is a historical record.
-Live security value decays in seconds, so when analytics falls behind, old
-frames are discarded and latency stays flat.
+**Degrade loudly, never silently.** Missing artefacts do not stop a node; it
+falls back and *says so* in `/health`, in both consoles, and in the
+`ibvap_model_info` metric. A control room must never believe it has face
+recognition when the node has no embedder.
 
-Frames are still *decoded* at source rate, because an unread FFmpeg buffer
-grows until the frames it returns are already seconds stale. Decode
-everything; enqueue a sample.
+**Normalised coordinates everywhere.** Zones and tripwires are stored in
+`[0,1]`, never pixels. Cameras get re-profiled routinely (1080p by day, 720p
+sub-stream when the link degrades); pixel geometry would silently shift under
+every operator-drawn fence.
 
-### Degrade loudly, never silently
+**Suppression is a feature.** An unfiltered rule set across 32 cameras produces
+thousands of events an hour, and a control room receiving thousands of alerts
+an hour stops reading them within a shift. Deduplication, per-rule cooldown and
+a hard per-camera rate limit narrow the flow, and every suppressed event is
+*counted* so over-tuning shows on a dashboard rather than looking like a quiet
+night.
 
-Missing model artefacts do not stop a node. The detector falls back to
-classical background subtraction with shape heuristics, face detection falls
-back to a Haar cascade where one is available, and plate localisation falls
-back to morphology. These are materially worse — and the platform says so, in
-`/health`, in the operator console, and in the `ibvap_model_info` metric.
+**Evidence must be defensible.** SHA-256 per artefact plus a per-day hash chain
+across manifests, so alteration *and deletion* are both detectable. This is
+tamper-evident, not tamper-proof — anyone with write access could rebuild the
+chain; defeating that needs an append-only store, which is a deployment choice.
 
-A control room must never be left believing it has face recognition when the
-node has no embedder.
+---
 
-### Normalised coordinates everywhere
+## Simulation
 
-Zones and tripwires are stored in `[0, 1]` space, never pixels. Cameras get
-re-profiled routinely (1080p main stream by day, 720p sub-stream when the link
-degrades); pixel geometry would silently shift under every operator-drawn fence.
+`sim://<scenario>` renders scripted border footage in-process: terrain with a
+fence line and approach road, actors that walk, drive and graze, day/night/IR
+palettes, haze and sensor noise, with perspective scaling so distant objects
+are smaller.
 
-### Suppression is a first-class feature
+| Scenario | Exercises |
+|---|---|
+| `patrol` | Routine activity — should raise nothing |
+| `intrusion` | Zone entry and fence crossing |
+| `cattle` | Livestock suppression, with a person for contrast |
+| `vehicle` | Approach-road traffic, ANPR staging |
+| `loiter` | Dwell-time logic |
+| `abandoned` | Unattended-object logic |
+| `crowd` | Density and clustering |
+| `night` | IR palette, night-movement rules |
 
-An unfiltered rule set across 32 cameras produces thousands of events an hour,
-and a control room that receives thousands of alerts an hour stops reading them
-within a shift. Three independent mechanisms narrow the flow — deduplication,
-per-rule cooldown, and a hard per-camera rate limit — and every suppressed
-event is *counted* so over-aggressive tuning shows up on a dashboard instead of
-being mistaken for a quiet night.
+It exists because the real footage — people crossing fences at night, cattle in
+restricted zones — is operationally sensitive, rarely shareable, and never
+available when a specific case is needed. Scenarios are deterministic by seed,
+so a test asserting "this raises an intrusion alert" gives the same answer on
+every machine.
 
-The single highest-value tuning knob is `analytics.ignore_classes: [animal]`.
-Stray cattle on rural fence lines are the dominant false-alarm source in this
-domain.
+**It is not a substitute for real footage when judging accuracy.** These are
+geometric figures on synthetic terrain; a detector's score here says nothing
+about its score on a real IR frame at 40 m.
 
-### Evidence must be defensible
-
-Every alert with a bounding box gets an annotated snapshot, optionally a clip
-assembled from a rolling pre-event buffer, a SHA-256 per artefact, and a
-manifest chained to the previous one for that day. Alteration *and deletion*
-are both detectable.
-
-This is tamper-**evident**, not tamper-proof: anyone with write access to the
-directory could rebuild the chain. Defeating that needs an append-only store or
-external notarisation, which is a deployment decision.
+---
 
 ## Module map
 
 | Package | Responsibility |
 |---|---|
 | `core/` | Domain types, layered config, geometry, logging, time windows |
-| `ingest/` | Video sources, resilient reader, bounded queue |
-| `vision/` | ONNX backends, detector, tracker, ANPR, face |
+| `ingest/` | Video sources, scenario simulator, resilient reader, bounded queue |
+| `vision/` | ONNX backends, detectors, classifier, tracker, ANPR, face |
 | `analytics/` | Rules and the per-camera engine with its suppression gate |
 | `events/` | Annotation, evidence store, canonical payload |
 | `pipeline/` | Model bundle, camera worker, supervisor |
 | `storage/` | ORM, async engine, repositories |
-| `integrations/` | Webhook, MQTT, syslog sinks; store-and-forward dispatcher |
+| `integrations/` | Signed webhook sink and the store-and-forward dispatcher |
 | `api/` | FastAPI app, auth/RBAC, routers |
 | `ui/` | Browser operator console (no build step, no CDN) |
-| `desktop/` | PyQt6 native console |
-| `mlops/` | Registry, export, benchmark, evaluation, drift |
+| `desktop/` | PyQt6 native console with the zone editor |
+| `mlops/` | Registry and authoring, benchmark, evaluation, drift |
 | `telemetry/` | Prometheus instrumentation |
 
-## Data flow for one alert
-
-1. `StreamReader` decodes a frame and enqueues it if the sampling interval has
-   elapsed.
-2. `CameraWorker` runs the detector (every `detect_interval` frames) and the
-   tracker (every frame; it coasts on Kalman prediction in between).
-3. Confirmed tracks reach `AnalyticsEngine`, which runs each configured rule.
-4. Rules emit events; the gate decides which survive.
-5. `AppState` captures evidence while the frame is still in memory.
-6. `EventDispatcher` persists the event, queues it per sink, and delivers.
-7. Consoles receive it over WebSocket; C2 receives it over its configured sink.
-
-Median end-to-end latency on a 4-core CPU node is single-digit milliseconds for
-the analytics stage; the dominant cost is detection.
+---
 
 ## Tiers
 
@@ -140,6 +243,6 @@ dependencies, survives losing its uplink indefinitely via the outbox.
 **Central** (`tier: central`) aggregates at sector level. PostgreSQL, multiple
 replicas, no cameras of its own.
 
-The edge tier is deliberately *not* deployed on Kubernetes: a BOP node gains
-nothing from an orchestrator that sits on the far side of the link that just
-failed.
+The edge tier is deliberately *not* deployed on an orchestrator: a BOP node
+gains nothing from a control plane sitting on the far side of the link that
+just failed.

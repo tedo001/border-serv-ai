@@ -132,7 +132,11 @@ class TestDetectorLayouts:
         assert [d.obj_class for d in result] == [ObjectClass.PERSON]
 
     def test_all_layouts_are_named(self) -> None:
-        assert {"auto", "yolov5", "yolov8", "yolo26", "nms_xyxy"} == SUPPORTED_LAYOUTS
+        """Pinned deliberately: adding a layout without a decoder for it, or a
+        decoder without registering it, both fail here rather than silently."""
+        assert {
+            "auto", "yolov5", "yolov8", "yolo26", "rtdetr", "nms_xyxy",
+        } == SUPPORTED_LAYOUTS
 
 
 class TestMotionFallback:

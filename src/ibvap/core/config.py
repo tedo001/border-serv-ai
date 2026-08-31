@@ -136,6 +136,10 @@ class CameraConfig(BaseModel):
     anpr_enabled: bool = False
     #: Enable face detection/recognition (use at check posts and gates).
     face_enabled: bool = False
+    #: Run the secondary ImageNet classifier over each new track to refine its
+    #: class. Costs a few milliseconds per object (not per frame) and is the
+    #: difference between suppressing livestock by class and not being able to.
+    classify_objects: bool = True
     #: Auto-enable low-light enhancement when the frame is dark.
     night_enhancement: bool = True
     tags: list[str] = Field(default_factory=list)
@@ -198,6 +202,11 @@ class ModelsConfig(BaseModel):
         default_factory=lambda: ModelSpec(name="plate-detector", score_threshold=0.4)
     )
     plate_ocr: ModelSpec = Field(default_factory=lambda: ModelSpec(name="plate-ocr"))
+    #: Secondary ImageNet classifier used to refine coarse detections. Its
+    #: score threshold is the confidence below which a verdict is ignored.
+    classifier: ModelSpec = Field(
+        default_factory=lambda: ModelSpec(name="mobilenet-imagenet", score_threshold=0.35)
+    )
 
 
 class PipelineConfig(BaseModel):
@@ -340,37 +349,20 @@ class WebhookConfig(BaseModel):
     max_retries: int = Field(default=3, ge=0, le=10)
 
 
-class MqttConfig(BaseModel):
-    """MQTT sink - the usual transport to a sector control room."""
-
-    enabled: bool = False
-    host: str = "localhost"
-    port: int = Field(default=1883, ge=1, le=65535)
-    username: str = ""
-    password: str = ""
-    topic_prefix: str = "ibvap/events"
-    qos: int = Field(default=1, ge=0, le=2)
-    tls: bool = False
-    min_severity: Literal["info", "low", "medium", "high", "critical"] = "low"
 
 
-class SyslogConfig(BaseModel):
-    """Syslog/CEF sink for SIEM ingestion."""
-
-    enabled: bool = False
-    host: str = "localhost"
-    port: int = Field(default=514, ge=1, le=65535)
-    protocol: Literal["udp", "tcp"] = "udp"
-    facility: int = Field(default=13, ge=0, le=23)
-    min_severity: Literal["info", "low", "medium", "high", "critical"] = "medium"
 
 
 class IntegrationsConfig(BaseModel):
-    """All outbound C2 integrations plus store-and-forward behaviour."""
+    """Outbound C2 delivery and store-and-forward behaviour.
+
+    Delivery is over signed HTTP webhooks only. Other transports belong in a
+    small adapter behind one endpoint rather than inside the node, where their
+    client libraries become the node's dependencies and their failure modes
+    become its failure modes.
+    """
 
     webhooks: list[WebhookConfig] = Field(default_factory=list)
-    mqtt: MqttConfig = Field(default_factory=MqttConfig)
-    syslog: SyslogConfig = Field(default_factory=SyslogConfig)
     #: Persist undelivered events and replay them when the link returns.
     #: Essential at remote BOPs where connectivity is intermittent by default.
     store_and_forward: bool = True

@@ -7,12 +7,12 @@
 | Runs | Beside the cameras | In a control room / data centre |
 | Cameras | 4–16 typically | None |
 | Database | SQLite (no server) | PostgreSQL |
-| Deploy with | Docker Compose or systemd | Kubernetes |
+| Deploy with | Docker Compose or systemd | Docker Compose |
 | Survives uplink loss | Yes — outbox replays | N/A |
 
-The edge tier is deliberately **not** deployed on Kubernetes. A BOP node gains
-nothing from an orchestrator sitting on the far side of the link that just
-failed.
+The edge tier is deliberately **not** deployed on an orchestrator. A BOP node
+gains nothing from a control plane sitting on the far side of the link that
+just failed.
 
 ## Sizing a node
 
@@ -64,7 +64,6 @@ media and gets attached to tickets. Inject through the environment:
 |---|---|
 | `IBVAP_SECURITY__JWT_SECRET` | Token signing key (min 32 bytes; `ibvap secret`) |
 | `IBVAP_SECURITY__BOOTSTRAP_ADMIN_PASSWORD` | First admin password; omit to auto-generate |
-| `IBVAP_INTEGRATIONS__MQTT__PASSWORD` | MQTT broker credential |
 
 Any setting can be overridden this way — `IBVAP_` prefix, `__` for nesting.
 
@@ -73,17 +72,24 @@ Any setting can be overridden this way — `IBVAP_` prefix, `__` for nesting.
 A node runs classical fallback detection until artefacts are installed, and
 reports itself `degraded` throughout.
 
-```bash
-pip install "ibvap[export]"
+Producing the `.onnx` is the training toolchain's job — `yolo export`,
+`torch.onnx.export`, or a vendor tool. The platform's job starts once the file
+exists:
 
-ibvap models export yolo26s.pt \
-    -o models/detector/yolo26s-border-1.0.0.onnx \
-    --family yolo26 --imgsz 640 \
-    --register yolo26s-border:1.0.0 \
+```bash
+ibvap models register yolo26s.onnx \
+    --name yolo26s-border --version 1.0.0 \
+    --role detector --layout yolo26 --imgsz 640 \
+    --classes person,bicycle,motorcycle,car,bus,truck,boat,cow,backpack \
     --card docs/model-cards/yolo26s-border.md
 
 ibvap models verify        # confirm checksums before restarting
 ```
+
+`--layout` is not optional in practice. It tells the decoder how to read the
+graph's output, and getting it wrong does not raise — it produces silently
+wrong boxes. RT-DETR in particular emits **normalised** coordinates; read as
+YOLO pixels they collapse into the corner of every frame.
 
 Copy `models/` and `registry.yaml` together to each node. A checksum mismatch
 is **fatal** by design — an artefact truncated by a failed sync still loads and

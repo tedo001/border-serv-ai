@@ -275,16 +275,35 @@ def build_source(
     ``synthetic://`` URLs accept query parameters, e.g.
     ``synthetic://?width=640&height=480&fps=10&night=1``.
     """
-    if url.startswith("synthetic://"):
+    if url.startswith(("synthetic://", "sim://")):
         from urllib.parse import parse_qs, urlparse
 
-        params = parse_qs(urlparse(url).query)
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
 
         def get_int(key: str, default: int) -> int:
             try:
                 return int(params.get(key, [str(default)])[0])
             except (ValueError, IndexError):
                 return default
+
+        if url.startswith("sim://"):
+            # sim://<scenario>?width=..&night=1 - renders a scripted border
+            # scenario rather than a single moving figure.
+            from ibvap.ingest.simulator import SimulatedSource
+
+            return SimulatedSource(
+                parsed.netloc or params.get("scenario", ["patrol"])[0],
+                width=get_int("width", 1280),
+                height=get_int("height", 720),
+                fps=float(get_int("fps", 15)),
+                seed=get_int("seed", 0),
+                night=bool(get_int("night", 0)),
+                haze=get_int("haze", 0) / 100.0,
+                noise=get_int("noise", 2) / 100.0,
+                loop=bool(get_int("loop", 1)),
+                duration=float(get_int("duration", 30)),
+            )
 
         return SyntheticSource(
             width=get_int("width", 1280),

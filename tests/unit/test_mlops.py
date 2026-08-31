@@ -20,8 +20,7 @@ from ibvap.mlops.evaluate import (
     evaluate_detection,
     evaluate_face_matching,
 )
-from ibvap.mlops.export import register_model, write_model_card
-from ibvap.mlops.registry import ModelRegistry, _version_key, sha256_file
+from ibvap.mlops.registry import ModelRegistry, _version_key, register_model, sha256_file, write_model_card
 
 
 @pytest.fixture

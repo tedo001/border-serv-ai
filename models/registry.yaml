@@ -6,19 +6,20 @@
 # from a filename, and an artefact whose checksum does not match will not load.
 #
 # The entries below are the DECLARATIONS for a standard deployment. The .onnx
-# artefacts themselves are not in version control — they are produced by
-# `ibvap models export` and distributed with the site build. A node whose
+# artefacts themselves are not in version control — they are exported by the
+# training toolchain and distributed with the site build. A node whose
 # artefacts are absent falls back to classical detection and reports itself as
 # degraded through /health and the operator console; it does not fail to start.
 #
 # To populate this registry:
 #
-#   ibvap models export yolo26s.pt -o models/detector/yolo26s-border-1.0.0.onnx \
-#       --family yolo26 --imgsz 640 \
-#       --register yolo26s-border:1.0.0 --card docs/model-cards/yolo26s-border.md
+#   ibvap models register models/detector/yolo26s-border-1.0.0.onnx \
+#       --name yolo26s-border --version 1.0.0 \
+#       --role detector --layout yolo26 --imgsz 640 \
+#       --card docs/model-cards/yolo26s-border.md
 #
-# `export` writes the real checksum and class list into this file; the values
-# below are placeholders and will be replaced.
+# `register` writes the real checksum into this file; the values below are
+# placeholders and will be replaced.
 #
 # Output layouts:
 #   yolo26     end-to-end, NMS-free head — RECOMMENDED for new deployments
@@ -43,7 +44,7 @@ models:
     versions:
       "1.0.0":
         file: detector/yolo26s-border-1.0.0.onnx
-        sha256: ""              # written by `ibvap models export`
+        sha256: ""              # written by `ibvap models register`
         layout: yolo26
         input_size: [640, 640]
         classes:
@@ -83,6 +84,58 @@ models:
         provenance:
           family: yolo11
           end_to_end: false
+        enabled: true
+
+  rtdetr-l-border:
+    role: detector
+    description: >
+      RT-DETR-L, a transformer set predictor. Slower per frame than YOLO on
+      CPU but markedly steadier on crowded scenes, because duplicate
+      suppression is learned rather than applied by a threshold afterwards.
+      Worth the cost at a check post; usually not on a 16-camera BOP node.
+    default: "1.0.0"
+    versions:
+      "1.0.0":
+        file: detector/rtdetr-l-border-1.0.0.onnx
+        sha256: ""
+        # RT-DETR emits NORMALISED cxcywh. Declaring this layout is what makes
+        # the decoder scale them to pixels; read as YOLO output they collapse
+        # into the top-left corner of every frame.
+        layout: rtdetr
+        input_size: [640, 640]
+        classes: [person, bicycle, motorcycle, car, bus, truck, boat, cow, backpack]
+        metrics: {}
+        provenance:
+          family: rtdetr
+          end_to_end: true
+        enabled: true
+
+  # --- secondary classification --------------------------------------------
+  mobilenet-imagenet:
+    role: classifier
+    description: >
+      MobileNetV3-Large pretrained on ImageNet-1k, run over each new track's
+      crop to refine the detector's coarse class. Its value here is the ~400
+      animal classes: confirming "ox, not person" is what makes livestock
+      suppressible on a rural fence line.
+
+      Note it has NO person class, so the platform uses it to demote and
+      reclassify only, never to promote something to PERSON.
+    default: "1.0.0"
+    versions:
+      "1.0.0":
+        file: classifier/mobilenetv3-imagenet-1.0.0.onnx
+        sha256: ""
+        layout: auto
+        input_size: [224, 224]
+        # Standard ImageNet-1k ordering. The index -> IBVAP class mapping
+        # lives in ibvap.vision.classifier; only the ordering matters here.
+        classes: []
+        metrics: {}
+        provenance:
+          family: mobilenetv3
+          dataset: imagenet-1k
+          preprocessing: "224x224 RGB, mean/std 0.485,0.456,0.406 / 0.229,0.224,0.225"
         enabled: true
 
   # --- ANPR ----------------------------------------------------------------

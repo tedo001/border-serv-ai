@@ -11,6 +11,7 @@ import argparse
 import json
 import secrets
 import sys
+from pathlib import Path
 from typing import Any
 
 from ibvap import __version__
@@ -103,24 +104,23 @@ def _build_parser() -> argparse.ArgumentParser:
     model_verify.add_argument("--config", "-c")
     model_verify.set_defaults(handler=_models_verify)
 
-    model_export = model_actions.add_parser("export", help="export a checkpoint to ONNX")
-    model_export.add_argument("weights", help="path to the source checkpoint (.pt)")
-    model_export.add_argument("--output", "-o", required=True, help="output .onnx path")
-    model_export.add_argument("--family", default="yolo26",
-                              help="model family: yolo26, yolo11, yolov8, yolov5, rtdetr")
-    model_export.add_argument("--imgsz", type=int, default=640)
-    model_export.add_argument("--opset", type=int, default=17)
-    model_export.add_argument("--register", metavar="NAME:VERSION",
-                              help="register the result, e.g. yolo26s-border:1.0.0")
-    model_export.add_argument("--registry", default="models/registry.yaml")
-    model_export.add_argument("--role", default="detector")
-    model_export.add_argument("--card", help="write a model card to this path")
-    model_export.set_defaults(handler=_models_export)
-
-    model_quantise = model_actions.add_parser("quantise", help="quantise a model to INT8")
-    model_quantise.add_argument("source")
-    model_quantise.add_argument("--output", "-o", required=True)
-    model_quantise.set_defaults(handler=_models_quantise)
+    model_register = model_actions.add_parser(
+        "register", help="add an ONNX artefact to the registry"
+    )
+    model_register.add_argument("artefact", help="path to the .onnx file")
+    model_register.add_argument("--name", required=True, help="registry model name")
+    model_register.add_argument("--version", required=True, help="version, e.g. 1.0.0")
+    model_register.add_argument("--role", default="detector",
+                                help="detector, classifier, plate_detector, plate_ocr, "
+                                     "face_detector or face_embedder")
+    model_register.add_argument("--layout", default="auto",
+                                help="output layout: rtdetr, yolo26, yolov8, yolov5, nms_xyxy")
+    model_register.add_argument("--imgsz", type=int, default=640, help="model input size")
+    model_register.add_argument("--classes", default="",
+                                help="comma-separated class names, in model order")
+    model_register.add_argument("--registry", default="models/registry.yaml")
+    model_register.add_argument("--card", help="write a model card to this path")
+    model_register.set_defaults(handler=_models_register)
 
     # -- evidence --
     evidence = subparsers.add_parser("evidence", help="verify and manage stored evidence")
@@ -400,39 +400,49 @@ def _models_verify(args: Any) -> int:
     return 1 if failures else 0
 
 
-def _models_export(args: Any) -> int:
-    from ibvap.mlops.export import export_ultralytics, register_model, write_model_card
+def _models_register(args: Any) -> int:
+    """Register an already-exported ONNX artefact.
 
-    metadata = export_ultralytics(
-        args.weights, args.output,
-        family=args.family, image_size=args.imgsz, opset=args.opset,
+    Producing the .onnx is left to whatever framework trained the model -
+    `yolo export`, `torch.onnx.export`, or a vendor toolchain. This command
+    does the part that belongs to the platform: hash the artefact, record its
+    layout and class list, and refuse to overwrite a version that is already
+    published under a different checksum.
+    """
+    from ibvap.mlops.registry import register_model, sha256_file, write_model_card
+
+    artefact = Path(args.artefact)
+    if not artefact.is_file():
+        print(f"artefact not found: {artefact}", file=sys.stderr)
+        return 1
+
+    classes = [c.strip() for c in args.classes.split(",") if c.strip()]
+    metadata = {
+        "file": str(artefact),
+        "sha256": sha256_file(artefact),
+        "layout": args.layout,
+        "input_size": [args.imgsz, args.imgsz],
+        "classes": classes,
+        "size_mb": round(artefact.stat().st_size / 1024**2, 2),
+        "provenance": {"registered_from": artefact.name},
+    }
+    register_model(
+        args.registry, args.name, args.version, metadata,
+        role=args.role, make_default=True,
     )
     print(json.dumps({k: v for k, v in metadata.items() if k != "classes"}, indent=2))
+    print(f"\nregistered {args.name}:{args.version} in {args.registry}")
 
-    if args.register:
-        if ":" not in args.register:
-            print("--register expects NAME:VERSION", file=sys.stderr)
-            return 1
-        name, version = args.register.split(":", 1)
-        register_model(args.registry, name, version, metadata, role=args.role, make_default=True)
-        print(f"\nregistered {name}:{version} in {args.registry}")
-        if args.card:
-            write_model_card(args.card, name, version, metadata)
-            print(f"model card written to {args.card}")
-    return 0
-
-
-def _models_quantise(args: Any) -> int:
-    from ibvap.mlops.export import quantise_dynamic
-
-    result = quantise_dynamic(args.source, args.output)
-    print(json.dumps(result, indent=2))
+    if args.card:
+        write_model_card(args.card, args.name, args.version, metadata)
+        print(f"model card written to {args.card}")
     print(
-        "\nRe-evaluate accuracy before deploying: INT8 conversion changes it, "
-        "and by how much depends on the model and the scene.",
+        "\nEvaluate accuracy on labelled data from a representative site before "
+        "commissioning this version.",
         file=sys.stderr,
     )
     return 0
+
 
 
 def _evidence_verify(args: Any) -> int:

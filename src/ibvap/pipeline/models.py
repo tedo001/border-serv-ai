@@ -27,6 +27,7 @@ from ibvap.core.logging import get_logger
 from ibvap.mlops.registry import ModelRegistry
 from ibvap.telemetry.metrics import Metrics
 from ibvap.vision.anpr import PlateLocator, PlateOCR, PlateReader
+from ibvap.vision.classifier import ImageNetClassifier
 from ibvap.vision.detector import BaseDetector, MotionDetector, ObjectDetector
 from ibvap.vision.face import FaceDetector, FaceEmbedder, FaceGallery
 
@@ -49,6 +50,7 @@ class ModelBundle:
     face_embedder: FaceEmbedder | None = None
     face_gallery: FaceGallery | None = None
     plate_reader: PlateReader | None = None
+    classifier: ImageNetClassifier | None = None
     #: ``role -> {name, version, layout, mode}`` for health reporting.
     loaded: dict[str, dict[str, Any]] = field(default_factory=dict)
     registry: ModelRegistry | None = None
@@ -60,6 +62,10 @@ class ModelBundle:
     @property
     def anpr_available(self) -> bool:
         return bool(self.plate_reader and self.plate_reader.available)
+
+    @property
+    def classifier_available(self) -> bool:
+        return bool(self.classifier and self.classifier.available)
 
     @property
     def face_available(self) -> bool:
@@ -76,6 +82,7 @@ class ModelBundle:
             "detector_mode": self.detector_mode,
             "detector_is_neural": bool(self.detector and self.detector.is_neural),
             "anpr_available": self.anpr_available,
+            "classifier_available": self.classifier_available,
             "face_available": self.face_available,
             "face_gallery_size": self.face_gallery.size if self.face_gallery else 0,
             "models": self.loaded,
@@ -180,6 +187,22 @@ def build_model_bundle(
                 detail="no OCR artefact; plates can be located but not read",
             )
         bundle.plate_reader = PlateReader(locator, ocr)
+
+    # -- secondary classifier ---------------------------------------------- #
+    if any(cam.classify_objects for cam in settings.cameras) or not settings.cameras:
+        loaded = registry.load_backend(models.classifier)
+        if loaded is not None:
+            backend, version = loaded
+            bundle.classifier = ImageNetClassifier(
+                backend, min_confidence=models.classifier.score_threshold
+            )
+            record("classifier", models.classifier.name or "", version.version,
+                   version.layout, "neural")
+        else:
+            log.info(
+                "classifier_unavailable",
+                detail="no ImageNet classifier artefact; detector classes are used as-is",
+            )
 
     log.info("model_bundle_ready", **{k: str(v) for k, v in bundle.status().items() if k != "models"})
     return bundle

@@ -31,6 +31,7 @@ from ibvap.core.config import ModelsConfig, ModelSpec
 from ibvap.core.errors import (
     ChecksumMismatchError,
     ConfigError,
+    ModelError,
     ModelNotFoundError,
 )
 from ibvap.core.logging import get_logger
@@ -45,6 +46,7 @@ MODEL_ROLES: tuple[str, ...] = (
     "face_embedder",
     "plate_detector",
     "plate_ocr",
+    "classifier",
 )
 
 
@@ -325,3 +327,154 @@ class ModelRegistry:
                     "notes": version.notes,
                 })
         return out
+
+
+# ------------------------------------------------------------------------- #
+# Registry authoring
+# ------------------------------------------------------------------------- #
+
+
+
+def register_model(
+    registry_path: str | Path,
+    name: str,
+    version: str,
+    metadata: dict[str, Any],
+    *,
+    role: str = "detector",
+    make_default: bool = False,
+    description: str = "",
+    metrics: dict[str, float] | None = None,
+) -> None:
+    """Add or update an entry in ``models/registry.yaml``.
+
+    Refuses to overwrite an existing version with different content. An
+    artefact that has been deployed must never change under a version another
+    site is pinning; publish a new version instead.
+    """
+    path = Path(registry_path)
+    document: dict[str, Any] = {"version": 1, "models": {}}
+    if path.is_file():
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or document
+    document.setdefault("models", {})
+
+    entry = document["models"].setdefault(
+        name, {"role": role, "description": description, "versions": {}}
+    )
+    if description:
+        entry["description"] = description
+    entry["role"] = role
+
+    existing = entry["versions"].get(version)
+    if existing and existing.get("sha256") != metadata.get("sha256"):
+        raise ModelError(
+            f"{name}:{version} is already registered with a different checksum. "
+            "Publish a new version rather than mutating a deployed one."
+        )
+
+    models_dir = path.parent
+    artefact = Path(metadata["file"])
+    try:
+        relative = artefact.resolve().relative_to(models_dir.resolve())
+        file_field = str(relative)
+    except ValueError:
+        file_field = str(artefact)
+
+    entry["versions"][version] = {
+        "file": file_field,
+        "sha256": metadata["sha256"],
+        "layout": metadata.get("layout", "auto"),
+        "input_size": metadata.get("input_size"),
+        "classes": metadata.get("classes", []),
+        "metrics": metrics or metadata.get("metrics", {}),
+        "provenance": metadata.get("provenance", {}),
+        "notes": metadata.get("notes", ""),
+        "enabled": True,
+    }
+    if make_default or not entry.get("default"):
+        entry["default"] = version
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(document, sort_keys=False, width=100), encoding="utf-8")
+    log.info(
+        "model_registered",
+        name=name, version=version, role=role,
+        layout=metadata.get("layout"), default=entry.get("default"),
+    )
+
+
+def write_model_card(
+    output: str | Path, name: str, version: str, metadata: dict[str, Any],
+    *, metrics: dict[str, float] | None = None, intended_use: str = "",
+    limitations: str = "",
+) -> Path:
+    """Write a model card documenting provenance, performance and limits.
+
+    A model card is not paperwork here. This platform can put a person in front
+    of an armed response; whoever authorises a deployment needs to know what
+    the model was trained on, how it was measured, and where it is known to
+    fail - particularly at night, at range, and on classes it confuses.
+    """
+    path = Path(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    provenance = metadata.get("provenance", {})
+    metrics = metrics or metadata.get("metrics", {})
+
+    lines = [
+        f"# Model card — {name}:{version}", "",
+        "## Identity", "",
+        f"- **Name**: `{name}`", f"- **Version**: `{version}`",
+        f"- **Artefact**: `{Path(metadata.get('file', '')).name}`",
+        f"- **SHA-256**: `{metadata.get('sha256', '')}`",
+        f"- **Output layout**: `{metadata.get('layout', 'auto')}`",
+        f"- **Input size**: {metadata.get('input_size')}",
+        f"- **Size**: {metadata.get('size_mb', '?')} MB",
+        f"- **Classes** ({len(metadata.get('classes', []))}): "
+        f"{', '.join(metadata.get('classes', [])[:20])}"
+        + (" …" if len(metadata.get("classes", [])) > 20 else ""),
+        "", "## Provenance", "",
+    ]
+    lines += [f"- **{k.replace('_', ' ')}**: {v}" for k, v in provenance.items()] or ["- not recorded"]
+
+    lines += ["", "## Measured performance", ""]
+    if metrics:
+        lines += ["| Metric | Value |", "|---|---|"]
+        lines += [f"| {k} | {v} |" for k, v in metrics.items()]
+    else:
+        lines.append(
+            "**Not yet evaluated.** Run `ibvap evaluate` against a labelled set "
+            "from a representative site before deploying this version."
+        )
+
+    lines += [
+        "", "## Intended use", "",
+        intended_use or (
+            "Detection of people and vehicles in fixed CCTV views at border out "
+            "posts, check posts and border roads, as input to the IBVAP analytics "
+            "rules. Not validated for any other purpose."
+        ),
+        "", "## Known limitations", "",
+        limitations or (
+            "- Accuracy degrades at long range; objects below roughly 20 px in "
+            "height are unreliable.\n"
+            "- Night-time and IR performance depends on illumination and is "
+            "materially worse than daytime unless the model was trained with IR "
+            "imagery.\n"
+            "- Livestock is a common source of false person detections on rural "
+            "fence lines; the `animal` class exists so it can be suppressed by "
+            "rule rather than by threshold.\n"
+            "- Heavy occlusion, adverse weather (fog, heavy rain) and camera "
+            "tampering all reduce recall.\n"
+            "- The model reflects the distribution of its training data; "
+            "performance at a given site should be re-measured after deployment."
+        ),
+        "", "## Operational guidance", "",
+        "- Verify the checksum above matches the deployed artefact before use.",
+        "- Re-evaluate after any quantisation; INT8 conversion changes accuracy.",
+        "- Monitor `ibvap_detections_total` and the drift report for a shift in "
+        "the score distribution, which usually precedes a measurable accuracy loss.",
+        "",
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
+    log.info("model_card_written", path=str(path))
+    return path

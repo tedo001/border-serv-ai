@@ -25,8 +25,6 @@ from ibvap.core.logging import get_logger
 from ibvap.core.types import Event
 from ibvap.events.payload import event_to_payload
 from ibvap.integrations.base import Sink
-from ibvap.integrations.mqtt import MqttSink
-from ibvap.integrations.syslog import SyslogSink
 from ibvap.integrations.webhook import WebhookSink
 from ibvap.storage.database import Database
 from ibvap.storage.repository import EventRepository, OutboxRepository
@@ -77,13 +75,14 @@ class EventDispatcher:
     # -- lifecycle --------------------------------------------------------- #
 
     def build_sinks(self) -> None:
-        """Instantiate sinks from configuration."""
-        integrations = self.settings.integrations
-        self.sinks = [WebhookSink(w) for w in integrations.webhooks if w.enabled]
-        if integrations.mqtt.enabled:
-            self.sinks.append(MqttSink(integrations.mqtt))
-        if integrations.syslog.enabled:
-            self.sinks.append(SyslogSink(integrations.syslog))
+        """Instantiate sinks from configuration.
+
+        Signed HTTP webhooks are the only transport. Anything else a C2 estate
+        needs - MQTT, syslog, a message bus - is a small adapter sitting behind
+        one webhook endpoint, which keeps that protocol's dependencies and
+        failure modes out of the node.
+        """
+        self.sinks = [WebhookSink(w) for w in self.settings.integrations.webhooks if w.enabled]
 
     async def start(self) -> None:
         if self._running:

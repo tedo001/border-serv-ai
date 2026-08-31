@@ -13,7 +13,8 @@ Seema Bal (SSB), Police II Division.
 
 | Capability | Implementation |
 |---|---|
-| Human detection and tracking | YOLO26/YOLOv8/v5 detector + ByteTrack-style tracker with Kalman filtering |
+| Human detection and tracking | RT-DETR / YOLO26 / YOLOv8 / v5 detector + ByteTrack-style tracker with Kalman filtering |
+| Object classification | MobileNetV3 (ImageNet-1k) secondary stage — reclassifies coarse detections, notably livestock |
 | Vehicle detection and classification | Same detector, taxonomy-mapped to car / truck / bus / motorcycle / bicycle |
 | Face detection and recognition | Detector → ArcFace-style embedding → watchlist gallery with margin gating |
 | ANPR | Plate localisation → CRNN + CTC → **Indian number-plate grammar correction** |
@@ -22,7 +23,7 @@ Seema Bal (SSB), Police II Division.
 | Night-time movement | Schedule windows that wrap midnight + measured-darkness gating + CLAHE enhancement |
 | Camera tamper | Lens obstruction, defocus and repositioning — detected while the stream stays up |
 | Real-time alerts and logging | WebSocket feed, evidence with chain of custody, audit trail |
-| C2 integration | Signed webhooks, MQTT, syslog/CEF — with store-and-forward |
+| C2 integration | Signed HTTP webhooks with store-and-forward |
 
 ## Quick start
 
@@ -109,7 +110,7 @@ Remote border posts are not data centres, and the design reflects that:
 |---|---|
 | [Architecture](docs/ARCHITECTURE.md) | How it fits together, and why |
 | [PyCharm guide](docs/PYCHARM.md) | Step-by-step IDE setup |
-| [Deployment](docs/DEPLOYMENT.md) | Sizing, Docker, systemd, Kubernetes, secrets |
+| [Deployment](docs/DEPLOYMENT.md) | Sizing, Docker, systemd, secrets |
 | [Security](docs/SECURITY.md) | Auth, RBAC, audit, privacy, evidence integrity |
 | [Operations](docs/OPERATIONS.md) | Tuning, metrics, drift, troubleshooting |
 
@@ -121,7 +122,7 @@ ibvap console    --node http://…              # desktop operator console
 ibvap validate   configs/site.yaml            # check a site file
 ibvap probe      rtsp://…                     # test a camera before configuring it
 ibvap benchmark  --resolution 1920x1080       # how many cameras this box can carry
-ibvap models     list | verify | export       # model registry
+ibvap models     list | verify | register     # model registry
 ibvap evidence   verify-chain 2026-08-24      # chain of custody
 ibvap secret                                  # generate a signing key
 ```

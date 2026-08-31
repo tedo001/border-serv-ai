@@ -8,6 +8,7 @@ Supported model families (selected per model in the registry via ``layout``):
 ``yolov5``       ``(anchors, 5+nc)``    v5/v7 heads: objectness x class score
 ``yolov8``       ``(4+nc, anchors)``    v8/v9/v10/v11: class scores, no objectness
 ``yolo26``       ``(N, 6)`` xyxy        End-to-end, NMS-free head (v10-style e2e)
+``rtdetr``       ``(queries, 4+nc)``    RT-DETR set predictor; normalised cxcywh
 ``nms_xyxy``     ``(N, 6)`` xyxy        Any export with NMS folded into the graph
 ``auto``         inferred from shape    Convenience only - prefer an explicit value
 ===============  =====================  ==========================================
@@ -62,15 +63,18 @@ LAYOUT_YOLOV5 = "yolov5"
 LAYOUT_YOLOV8 = "yolov8"
 LAYOUT_YOLO26 = "yolo26"
 LAYOUT_NMS_XYXY = "nms_xyxy"
+LAYOUT_RTDETR = "rtdetr"
 LAYOUT_AUTO = "auto"
 
 SUPPORTED_LAYOUTS: frozenset[str] = frozenset(
-    {LAYOUT_YOLOV5, LAYOUT_YOLOV8, LAYOUT_YOLO26, LAYOUT_NMS_XYXY, LAYOUT_AUTO}
+    {LAYOUT_YOLOV5, LAYOUT_YOLOV8, LAYOUT_YOLO26, LAYOUT_NMS_XYXY, LAYOUT_RTDETR, LAYOUT_AUTO}
 )
 
 #: Layouts whose graph already performed suppression. Re-running NMS over
 #: these can only remove valid detections, never improve them.
-END_TO_END_LAYOUTS: frozenset[str] = frozenset({LAYOUT_YOLO26, LAYOUT_NMS_XYXY})
+END_TO_END_LAYOUTS: frozenset[str] = frozenset(
+    {LAYOUT_YOLO26, LAYOUT_NMS_XYXY, LAYOUT_RTDETR}
+)
 
 #: Standard COCO-80 ordering, the class list of every public YOLO checkpoint.
 COCO80: tuple[str, ...] = (
@@ -169,7 +173,9 @@ class ObjectDetector(BaseDetector):
 
         layout = self.layout if self.layout != "auto" else self._infer_layout(arr)
 
-        if layout in END_TO_END_LAYOUTS:
+        if layout == LAYOUT_RTDETR:
+            boxes, scores, class_ids = self._decode_rtdetr(arr)
+        elif layout in END_TO_END_LAYOUTS:
             boxes, scores, class_ids = self._decode_end_to_end(arr)
         elif layout == LAYOUT_YOLOV8:
             boxes, scores, class_ids = self._decode_v8(arr)
@@ -269,6 +275,54 @@ class ObjectDetector(BaseDetector):
             return np.empty((0, 4)), np.empty(0), np.empty(0, dtype=np.int64)
         return (
             xywh_to_xyxy(pred[mask, :4]),
+            scores[mask].astype(np.float64),
+            class_ids[mask].astype(np.int64),
+        )
+
+    def _decode_rtdetr(self, arr: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Decode RT-DETR output: ``(queries, 4 + nc)``.
+
+        Two things differ from every YOLO layout and both are silent failures
+        if missed.
+
+        **Boxes are normalised to [0, 1]**, not in model-input pixels. A YOLO
+        decoder applied to this output produces boxes clustered in the top-left
+        few pixels of the frame - detections that look plausible in a list and
+        are nonsense on screen. They are scaled to input pixels here so the
+        letterbox inverse downstream sees the same units it does for YOLO.
+
+        **There is no objectness and no NMS.** RT-DETR is a set predictor: each
+        of its (typically 300) queries emits at most one object, and duplicate
+        suppression is learned rather than applied afterwards.
+        """
+        pred = arr
+        # Some exporters emit (4 + nc, queries); transpose to queries-major.
+        if pred.shape[0] < pred.shape[1] and pred.shape[0] <= 128:
+            pred = pred.T
+
+        if pred.shape[1] <= 4:
+            return np.empty((0, 4)), np.empty(0), np.empty(0, dtype=np.int64)
+
+        cls_scores = pred[:, 4:]
+        # Logits rather than probabilities in some exports: if anything falls
+        # outside [0, 1] the head clearly has no sigmoid, so apply one.
+        if cls_scores.min() < 0.0 or cls_scores.max() > 1.0:
+            cls_scores = 1.0 / (1.0 + np.exp(-cls_scores))
+
+        class_ids = cls_scores.argmax(axis=1)
+        scores = cls_scores[np.arange(len(pred)), class_ids]
+
+        mask = scores >= self.score_threshold
+        if not mask.any():
+            return np.empty((0, 4)), np.empty(0), np.empty(0, dtype=np.int64)
+
+        boxes = pred[mask, :4].astype(np.float64)
+        width, height = self.input_size
+        # Normalised cxcywh -> input-pixel cxcywh, then to corner form.
+        boxes[:, [0, 2]] *= width
+        boxes[:, [1, 3]] *= height
+        return (
+            xywh_to_xyxy(boxes),
             scores[mask].astype(np.float64),
             class_ids[mask].astype(np.int64),
         )

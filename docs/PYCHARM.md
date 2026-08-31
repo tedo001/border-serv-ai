@@ -335,23 +335,28 @@ parameters:
 
 ## Optional — enable the neural detector
 
-Out of the box the node runs classical fallback detection. To use YOLO26:
+Out of the box the node runs classical fallback detection. To use a real model,
+export it with your training toolchain, then register it:
 
 ```bash
-pip install -e ".[export]"          # brings in torch + ultralytics
+ibvap models register yolo26s.onnx \
+    --name yolo26s-border --version 1.0.0 \
+    --role detector --layout yolo26 --imgsz 640
 
-ibvap models export yolo26s.pt \
-    -o models/detector/yolo26s-border-1.0.0.onnx \
-    --family yolo26 --imgsz 640 \
-    --register yolo26s-border:1.0.0 \
-    --card docs/model-cards/yolo26s-border.md
+ibvap models verify
 ```
 
-That exports to ONNX, verifies the graph's actual output layout, writes the
-checksum into `models/registry.yaml`, and produces a model card.
-
-Restart the node. `/health` should now report `detector_mode: neural` and
+Restart the node. `/health` should then report `detector_mode: neural` and
 `degraded: false`.
+
+The same applies to the secondary classifier, which is what makes livestock
+suppressible by class:
+
+```bash
+ibvap models register mobilenetv3.onnx \
+    --name mobilenet-imagenet --version 1.0.0 \
+    --role classifier --layout auto --imgsz 224
+```
 
 ---
 

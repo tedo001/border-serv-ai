@@ -115,7 +115,6 @@ async def get_config(state: StateDep, principal: RequireSupervisor) -> dict:
     config["security"].pop("bootstrap_admin_password", None)
     for webhook in config.get("integrations", {}).get("webhooks", []):
         webhook.pop("hmac_secret", None)
-    config.get("integrations", {}).get("mqtt", {}).pop("password", None)
     for camera in config.get("cameras", []):
         camera["url"] = _redact(camera.get("url", ""))
     return config

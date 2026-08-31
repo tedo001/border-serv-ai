@@ -64,6 +64,8 @@ class WorkerStats:
     plate_reads: int = 0
     face_matches: int = 0
     detector_invocations: int = 0
+    #: Tracks whose class the secondary classifier corrected.
+    reclassified: int = 0
     #: Exponential moving average of end-to-end processing latency, seconds.
     avg_latency: float = 0.0
     last_error: str = ""
@@ -76,6 +78,7 @@ class WorkerStats:
             "plate_reads": self.plate_reads,
             "face_matches": self.face_matches,
             "detector_invocations": self.detector_invocations,
+            "reclassified": self.reclassified,
             "avg_latency_ms": round(self.avg_latency * 1000, 2),
             "last_error": self.last_error,
         }
@@ -249,11 +252,26 @@ class CameraWorker:
     def _recognise(self, frame: Frame, tracks: list[Track]) -> list[Event]:
         """Run ANPR and face recognition opportunistically on eligible tracks."""
         events: list[Event] = []
+        # Refine coarse classes first, so ANPR, face and every analytics rule
+        # downstream sees the corrected class rather than the detector's guess.
+        if self.camera.classify_objects and self.bundle.classifier_available:
+            self._classify(frame, tracks)
         if self.camera.anpr_enabled and self.bundle.anpr_available:
             events.extend(self._run_anpr(frame, tracks))
         if self.camera.face_enabled and self.bundle.face_available:
             events.extend(self._run_face(frame, tracks))
         return events
+
+    def _classify(self, frame: Frame, tracks: list[Track]) -> None:
+        """Refine each new track's class with the ImageNet classifier.
+
+        Once per track, not once per frame: the verdict cannot change between
+        consecutive frames of the same object.
+        """
+        assert self.bundle.classifier is not None
+        for track in tracks:
+            if self.bundle.classifier.refine_track(frame.image, track):
+                self.stats.reclassified += 1
 
     def _run_anpr(self, frame: Frame, tracks: list[Track]) -> list[Event]:
         assert self.bundle.plate_reader is not None

@@ -365,6 +365,17 @@ def start_node(open_browser: bool = True) -> bool:
         say("      stop whatever is using it, or set IBVAP_PORT to another port")
         return False
 
+    # The invariant lives here rather than in the callers: *every* path that
+    # starts a node needs the project installed, and putting the check in one
+    # action meant the others launched a node into an empty environment and
+    # died with "No module named 'ibvap'" - an error that looks like a broken
+    # product rather than an unfinished setup step.
+    if not project_installed():
+        say.warn("the project is not installed in .venv yet - setting up first")
+        if not action_setup():
+            return False
+
+    ensure_config()
     environment = ensure_secret()
     VAR.mkdir(parents=True, exist_ok=True)
 
@@ -391,8 +402,13 @@ def start_node(open_browser: bool = True) -> bool:
     for _attempt in range(60):
         if process.poll() is not None:
             say.fail(f"the node exited immediately (code {process.returncode})")
+            tail = LOG_FILE.read_text(encoding="utf-8").splitlines()[-12:]
+            if any("No module named 'ibvap'" in line for line in tail):
+                say("      the virtual environment exists but the project is not")
+                say("      installed into it. Run 'Set up', or from a terminal:")
+                say(f"        {venv_python()} -m pip install -e .")
             say("      last lines of the log:")
-            for line in LOG_FILE.read_text(encoding="utf-8").splitlines()[-12:]:
+            for line in tail:
                 say(f"        {line}")
             return False
         snapshot = health()
@@ -473,9 +489,6 @@ def action_setup() -> bool:
 
 def action_start() -> bool:
     """Set up if needed, then start the node and open the console."""
-    if not project_installed() and not action_setup():
-        return False
-    ensure_config()
     say.step("Starting the node")
     return start_node()
 
