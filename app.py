@@ -563,6 +563,38 @@ def action_desktop() -> bool:
     return True
 
 
+def action_analyst() -> bool:
+    """Launch the live analysis console.
+
+    Unlike the operator console this needs no node, no database and no login:
+    it opens a video, runs the pipeline over it and shows the result. It is
+    the quickest way to see the platform actually doing something, so it is
+    also the first thing a reviewer should press.
+    """
+    say.step("Launching the live analysis console")
+    if not project_installed():
+        say.warn("the project is not installed in .venv yet - setting up first")
+        if not action_setup():
+            return False
+
+    check = subprocess.run(
+        [str(venv_python()), "-c", "import PyQt6"], capture_output=True, cwd=ROOT
+    )
+    if check.returncode != 0:
+        say.fail("PyQt6 is not installed in this environment")
+        say("      install it with:  .venv/bin/pip install -e '.[desktop]'")
+        say("      on Linux you may also need:  sudo apt-get install libegl1 libgl1 "
+            "libxkbcommon-x11-0")
+        return False
+
+    subprocess.Popen(
+        [str(venv_python()), "-m", "ibvap.desktop.analyst"], cwd=ROOT, env=ensure_secret()
+    )
+    say.ok("live analysis console launched in a separate window")
+    say("      pick a simulation scenario and press Start Analysis - no camera needed")
+    return True
+
+
 def action_test() -> bool:
     """Run the full test suite."""
     say.step("Running the test suite")
@@ -632,6 +664,7 @@ ACTIONS: list[tuple[str, str, object]] = [
     ("start",     "Start node and open console",          action_start),
     ("console",   "Open browser console",                 action_console),
     ("desktop",   "Open desktop console",                 action_desktop),
+    ("analyst",   "Open live analysis console",           action_analyst),
     ("status",    "Status",                               action_status),
     ("logs",      "Show node log",                        action_logs),
     ("stop",      "Stop node",                            action_stop),
@@ -732,8 +765,7 @@ def run_gui() -> int:
         button.pack(fill="x", pady=2)
         widgets.append(button)
 
-    def poll_state() -> None:
-        snapshot = health()
+    def show_state(snapshot) -> None:
         if snapshot is None:
             state_label.configure(text="NODE STOPPED", fg="#8b949e")
         else:
@@ -746,6 +778,24 @@ def run_gui() -> int:
                 fg=colour,
             )
         window.after(5000, poll_state)
+
+    def poll_state() -> None:
+        """Refresh the header chip without blocking the window.
+
+        `health()` waits up to four seconds for a node that is not answering,
+        which is exactly the state this poll exists to detect. Doing it on the
+        Tk thread froze the panel for those four seconds every cycle - during
+        setup, when the log is the only sign of progress.
+        """
+
+        def probe() -> None:
+            snapshot = health()
+            try:
+                window.after(0, show_state, snapshot)
+            except tk.TclError:
+                pass  # the window closed while the probe was in flight
+
+        threading.Thread(target=probe, daemon=True).start()
 
     drain()
     poll_state()

@@ -215,6 +215,43 @@ about its score on a real IR frame at 40 m.
 
 ---
 
+## Consoles
+
+Three surfaces read the same platform, and the split is by *job*, not by
+technology.
+
+| Console | Job | Needs a node? |
+|---|---|---|
+| Browser (`ui/`) | Duty operator: video wall, alert triage, evidence review | yes |
+| Desktop (`desktop/main_window.py`) | Supervisor: the above plus the zone editor | yes |
+| Live analysis (`desktop/analyst.py`) | Analyst: one source, tuned by hand | no |
+
+The live analysis console is the odd one out and deliberately so. It builds a
+`CameraWorker` itself — same detector, same tracker, same rules, same event
+gate — and subscribes to its `frame_sink` and `event_sink`. It does not talk
+to the API, does not authenticate and does not write evidence, because it is
+not a second node: it is a bench for deciding what the node should be told to
+do.
+
+That choice has two consequences worth stating:
+
+* **What the analyst tunes is what the node runs.** A confidence threshold, a
+  fence line or a livestock setting that behaves one way in this window
+  behaves the same way on the post, because there is only one implementation
+  underneath. A console with its own inference path would drift from the node
+  within a release or two, and the first argument about a missed alert would
+  be unwinnable.
+* **Frames are coalesced, not queued.** The worker produces faster than a GUI
+  paints. The bridge keeps only the newest unpainted frame and counts the
+  rest as dropped, so the window can fall behind in *detail* but never in
+  *time* — the same trade-off the ingest queue makes for the same reason.
+
+Its risk slider filters the alert *view* rather than the pipeline: every event
+stays in the JSON export, so raising the threshold to quieten the screen can
+never quietly discard the record that something happened.
+
+---
+
 ## Module map
 
 | Package | Responsibility |
@@ -229,7 +266,7 @@ about its score on a real IR frame at 40 m.
 | `integrations/` | Signed webhook sink and the store-and-forward dispatcher |
 | `api/` | FastAPI app, auth/RBAC, routers |
 | `ui/` | Browser operator console (no build step, no CDN) |
-| `desktop/` | PyQt6 native console with the zone editor |
+| `desktop/` | PyQt6 operator console (zone editor) and live analysis console |
 | `mlops/` | Registry and authoring, benchmark, evaluation, drift |
 | `telemetry/` | Prometheus instrumentation |
 

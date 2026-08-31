@@ -50,6 +50,7 @@ ibvap = "ibvap.cli:main"
 
 [project.gui-scripts]
 ibvap-console = "ibvap.desktop.app:main"
+ibvap-analyst = "ibvap.desktop.analyst:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

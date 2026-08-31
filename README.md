@@ -74,7 +74,20 @@ cameras:
 **Running in PyCharm?** Follow [`docs/PYCHARM.md`](docs/PYCHARM.md) — a
 step-by-step guide from clone to live alerts.
 
-## Two consoles
+## Three consoles
+
+**Live analysis** (`ibvap analyst`) — the quickest way to see the platform
+work. One window: pick a source (an RTSP camera, a video file, or a built-in
+simulated border scenario that needs no hardware at all), pick a detector,
+drag the confidence, IoU and risk thresholds, draw a fence line straight onto
+the video, and watch the annotated result with live counters and an alert log
+you can export as JSON. It needs no node, no database and no login — it builds
+the same camera worker the node runs, so a threshold that looks right here
+behaves the same way in the field.
+
+```bash
+ibvap analyst
+```
 
 **Browser** (bundled, served by the node) — video wall, alert triage with
 evidence review, watchlists, system dashboard. Dependency-free: no build step
@@ -119,6 +132,7 @@ Remote border posts are not data centres, and the design reflects that:
 ```bash
 ibvap serve      --config configs/site.yaml   # run a node
 ibvap console    --node http://…              # desktop operator console
+ibvap analyst                                 # live analysis console
 ibvap validate   configs/site.yaml            # check a site file
 ibvap probe      rtsp://…                     # test a camera before configuring it
 ibvap benchmark  --resolution 1920x1080       # how many cameras this box can carry

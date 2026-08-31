@@ -262,6 +262,47 @@ display (useful for smoke tests), or run it on a desktop session.
 
 ---
 
+## Step 9b — Run configuration for the live analysis console
+
+This is the one to set up first if you just want to *see* the platform work:
+it needs no node, no login and no camera.
+
+1. **Run → Edit Configurations… → `+` → Python**
+2. Fill in:
+
+| Field | Value |
+|---|---|
+| **Name** | `IBVAP Live Analysis` |
+| **Run** | **Module name** |
+| **Module name** | `ibvap.desktop.analyst` |
+| **Parameters** | *(none)* |
+| **Working directory** | the project root |
+
+3. **Apply → OK**, then run it.
+
+In the window:
+
+1. Leave **Simulation** selected and pick a scenario — `intrusion` is the
+   clearest first run.
+2. Press **Draw fence line** and click twice on the video to place a line
+   across the infiltrator's path. (You can draw before or during a run; the
+   analytics reloads either way.)
+3. Press **Start Analysis**.
+
+Frames appear with tracks drawn on them, the counters move, and the crossing
+lands in the alert log as a `line_crossing` with the direction it inferred.
+**Export alerts (JSON)** writes the run out with the thresholds it was made
+under.
+
+The **Risk threshold** slider filters what the log shows, not what the pipeline
+records — everything stays in the export.
+
+> Without `.onnx` artefacts in `models/`, the model box says so and the run
+> uses classical motion detection. It still detects, tracks and alerts; it just
+> infers classes from shape rather than recognising them.
+
+---
+
 ## Step 10 — Run the tests
 
 The simplest route is the gutter: open any file under `tests/` and click the
@@ -400,6 +441,7 @@ Individual actions can be run directly:
 python app.py setup       # environment and dependencies only
 python app.py start       # start the node, open the console
 python app.py desktop     # native desktop console
+python app.py analyst     # live analysis console (no node needed)
 python app.py status      # is it running, and how is it doing
 python app.py logs        # tail the node log
 python app.py test        # run the suite

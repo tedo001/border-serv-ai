@@ -67,6 +67,12 @@ def _build_parser() -> argparse.ArgumentParser:
     console.add_argument("--node", "-n", default="http://127.0.0.1:8080", help="node address")
     console.set_defaults(handler=_console)
 
+    # -- analyst --
+    analyst = subparsers.add_parser(
+        "analyst", help="launch the live analysis console (one source, no node)"
+    )
+    analyst.set_defaults(handler=_analyst)
+
     # -- validate --
     validate = subparsers.add_parser("validate", help="validate a site configuration file")
     validate.add_argument("config", help="path to the site YAML file")
@@ -187,6 +193,18 @@ def _console(args: Any) -> int:
         )
         return 1
     return console_main(["ibvap-console", "--node", args.node])
+
+
+def _analyst(_args: Any) -> int:
+    try:
+        from ibvap.desktop.analyst import main as analyst_main
+    except ImportError as exc:
+        print(
+            f"the live analysis console requires PyQt6: pip install 'ibvap[desktop]'\n({exc})",
+            file=sys.stderr,
+        )
+        return 1
+    return analyst_main()
 
 
 def _validate(args: Any) -> int:
