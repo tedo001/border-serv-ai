@@ -384,6 +384,10 @@ class EventType(str, Enum):
     NIGHT_MOVEMENT = "night_movement"       # motion during curfew hours
     VEHICLE_DETECTED = "vehicle_detected"
     PERSON_DETECTED = "person_detected"
+    #: Anything that is neither a person nor a vehicle - livestock, a bag, an
+    #: object the detector could not place. Separate because a control room
+    #: filtering on `person_detected` must not be shown cattle.
+    OBJECT_DETECTED = "object_detected"
     FACE_MATCH = "face_match"               # watchlist face hit
     PLATE_READ = "plate_read"               # ANPR read
     PLATE_MATCH = "plate_match"             # watchlist plate hit
@@ -424,6 +428,7 @@ _SEVERITY_RANK: dict[Severity, int] = {
 }
 
 _DEFAULT_SEVERITY: dict[EventType, Severity] = {
+    EventType.OBJECT_DETECTED: Severity.INFO,
     EventType.INTRUSION: Severity.HIGH,
     EventType.LINE_CROSSING: Severity.HIGH,
     EventType.LOITERING: Severity.MEDIUM,

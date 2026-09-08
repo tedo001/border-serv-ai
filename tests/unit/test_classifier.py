@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from tests.conftest import make_track
 
 from ibvap.core.types import BBox, Detection, ObjectClass
 from ibvap.vision.backends import CallableBackend
@@ -15,6 +14,7 @@ from ibvap.vision.classifier import (
     imagenet_to_ibvap,
     looks_like_livestock,
 )
+from tests.conftest import make_track
 
 
 def logit_head(index: int, magnitude: float = 9.0):

@@ -32,8 +32,17 @@ models:
   # both GPU sector nodes and CPU-only BOP nodes.
   providers: [CUDAExecutionProvider, CPUExecutionProvider]
   allow_stub_fallback: true      # keep watching even if artefacts are missing
+  # `rtdetr-l` runs published RT-DETR weights through the Torch runtime, which
+  # is what makes a fresh checkout detect real objects rather than falling back
+  # to motion. It needs the 'torch' extra and downloads the checkpoint into
+  # models/weights on first use; without the extra the node degrades to ONNX
+  # and then to motion detection, and says so in /health.
+  #
+  # For a post, export the same weights to ONNX and bind that instead - no
+  # Torch on the node:
+  #     ibvap models fetch rtdetr-l        ->  rtdetr-l-onnx
   detector:
-    name: yolo26s-border
+    name: rtdetr-l
     version: latest
     score_threshold: 0.35
   plate_detector: { name: plate-detector, score_threshold: 0.4 }

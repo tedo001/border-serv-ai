@@ -27,12 +27,60 @@
 #   yolov5     v5/v7 head (anchors, 5+nc) with objectness
 #   nms_xyxy   any export with NMS folded into the graph, (N, 6) xyxy
 #   auto       inferred from tensor shape — convenience only, prefer explicit
+#
+# Runtimes:
+#   onnx         a verified, checksummed .onnx artefact — what a post runs
+#   ultralytics  a published Torch checkpoint, run directly. This is the
+#                development and evaluation runtime: it downloads into
+#                models/weights on first use so a fresh clone detects real
+#                objects immediately, and `ibvap models fetch` exports the same
+#                weights to ONNX for the field.
 
 version: 1
 
 models:
 
   # --- object detection ----------------------------------------------------
+
+  # Published weights, so a fresh clone detects real objects on its first run
+  # rather than falling back to motion. Needs the 'torch' extra; the checkpoint
+  # downloads into models/weights on first use.
+  #
+  #   ibvap models fetch rtdetr-l     download, export ONNX, register it
+  #
+  rtdetr-l:
+    role: detector
+    description: >
+      RT-DETR large on published COCO weights. End-to-end and NMS-free: the
+      transformer decoder emits a fixed set of predictions, so there is no
+      CPU-side suppression pass — a real saving on an edge node carrying many
+      cameras on few cores. Person, vehicle and animal classes map onto the
+      IBVAP taxonomy directly; the rest of COCO degrades to UNKNOWN.
+    default: "coco"
+    versions:
+      "coco":
+        file: rtdetr-l.pt
+        runtime: ultralytics
+        layout: rtdetr
+        input_size: [640, 640]
+        classes: []             # read from the checkpoint itself
+        enabled: true
+
+  yolo11s-coco:
+    role: detector
+    description: >
+      YOLO11 small on published COCO weights — the CPU-only option for a post
+      whose hardware cannot carry RT-DETR at the frame rate the site needs.
+    default: "coco"
+    versions:
+      "coco":
+        file: yolo11s.pt
+        runtime: ultralytics
+        layout: yolov8
+        input_size: [640, 640]
+        classes: []
+        enabled: true
+
   yolo26s-border:
     role: detector
     description: >
@@ -197,3 +245,4 @@ models:
         input_size: [112, 112]
         classes: []
         enabled: true
+

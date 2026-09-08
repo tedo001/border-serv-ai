@@ -231,3 +231,64 @@ class TestRtdetrLayout:
         centre_x, centre_y = result[0].bbox.center
         assert centre_x == pytest.approx(320, abs=10)
         assert centre_y == pytest.approx(192, abs=10)
+
+
+class TestFileReplay:
+    """A file has an end; a camera does not.
+
+    Reaching the end of a clip used to raise ``StreamClosedError``, which the
+    reader treats as the stream dying: it marked the camera offline,
+    reconnected, reopened the file and marked it online again. Replaying a
+    30-second clip therefore produced a camera_offline/camera_online alert pair
+    every 30 seconds, and buried the analytics events between them.
+    """
+
+    def _clip(self, path, frames: int = 12):
+        import cv2
+        import numpy as np
+
+        writer = cv2.VideoWriter(
+            str(path), cv2.VideoWriter_fourcc(*"mp4v"), 10, (64, 48)
+        )
+        for index in range(frames):
+            frame = np.zeros((48, 64, 3), dtype=np.uint8)
+            frame[:, :, index % 3] = 255
+            writer.write(frame)
+        writer.release()
+        return path
+
+    def test_a_clip_rewinds_instead_of_reporting_the_stream_dead(
+        self, workspace
+    ) -> None:
+        from ibvap.ingest.source import build_source
+
+        source = build_source(str(self._clip(workspace / "clip.mp4")))
+        source.open()
+        try:
+            for _ in range(30):  # more than twice the clip's length
+                assert source.read() is not None
+            assert source.loops >= 2, "the clip never rewound"
+        finally:
+            source.close()
+
+    def test_a_network_stream_never_rewinds(self) -> None:
+        """Rewinding a camera would hide a real outage behind a replay."""
+        from ibvap.ingest.source import OpenCVSource
+
+        source = OpenCVSource("rtsp://10.0.0.5:554/stream")
+        assert source._can_rewind is False
+
+    def test_replay_can_be_turned_off(self, workspace) -> None:
+        from ibvap.core.errors import StreamClosedError
+        from ibvap.ingest.source import build_source
+
+        source = build_source(
+            str(self._clip(workspace / "once.mp4")), loop_files=False
+        )
+        source.open()
+        try:
+            with pytest.raises(StreamClosedError):
+                for _ in range(30):
+                    source.read()
+        finally:
+            source.close()

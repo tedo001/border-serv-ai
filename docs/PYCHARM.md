@@ -262,6 +262,44 @@ display (useful for smoke tests), or run it on a desktop session.
 
 ---
 
+## Step 9a — Give it real weights
+
+Everything above runs on classical motion detection: it detects, tracks and
+alerts, but it infers classes from shape rather than recognising them. Two
+commands change that.
+
+In the PyCharm terminal:
+
+```bash
+pip install -e '.[torch,sv]'
+```
+
+That installs Ultralytics (RT-DETR and YOLO on published weights) and
+supervision (the live-view annotators). The default `configs/site.yaml` already
+names `rtdetr-l`, so the next run picks it up and downloads the checkpoint into
+`models/weights` — about 63 MB, once.
+
+You will know it worked from the console: the detector line reads
+`mode=ultralytics:rtdetr` and `full` rather than `motion_fallback` and
+`degraded`.
+
+For a real deployment, export the same weights so the node needs no Torch:
+
+```bash
+ibvap models fetch rtdetr-l
+```
+
+This downloads the checkpoint, exports ONNX, hashes it and writes the entry
+into `models/registry.yaml`. Bind `rtdetr-l-onnx` in your site file and the
+post runs on ONNX Runtime alone.
+
+> The `sim://` scenarios draw geometric figures on synthetic terrain. They are
+> deterministic, which makes them right for testing rules and CI — but a
+> COCO-trained detector does not recognise them. To watch real detection, use
+> **Local video file** or a real RTSP camera.
+
+---
+
 ## Step 9b — Run configuration for the live analysis console
 
 This is the one to set up first if you just want to *see* the platform work:

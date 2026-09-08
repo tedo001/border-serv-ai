@@ -681,6 +681,36 @@ BY_NAME = {name: function for name, _, function in ACTIONS}
 # Graphical control panel
 # --------------------------------------------------------------------------- #
 
+def run_panel() -> int:
+    """Hand off to the Qt control panel, if this checkout can run one.
+
+    The Tk window below exists because this file has to work on a bare
+    checkout, before anything is installed - a constraint that makes it look
+    like 1998. Once .venv holds the project and PyQt6 there is no reason to
+    keep looking at it, so the real panel takes over: same actions, same
+    engine, drawn like the rest of the product.
+
+    Returns 0 when the panel ran, 1 when it could not be started - in which
+    case the caller falls back to Tk and then to the text menu.
+    """
+    if not project_installed():
+        return 1
+    probe = subprocess.run(
+        [str(venv_python()), "-c", "import PyQt6, ibvap.desktop.launcher"],
+        capture_output=True, cwd=ROOT,
+    )
+    if probe.returncode != 0:
+        return 1
+    result = subprocess.run(
+        [str(venv_python()), "-m", "ibvap.desktop.launcher"],
+        cwd=ROOT, env=ensure_secret(),
+    )
+    # A non-zero exit means the panel could not open a display (a headless
+    # session, or no X/Wayland); fall through so the user still gets a window
+    # or a menu rather than nothing at all.
+    return 0 if result.returncode == 0 else 1
+
+
 def run_gui() -> int:
     """A small Tk control panel. Returns 1 when Tk is unavailable."""
     try:
@@ -852,9 +882,10 @@ def run_menu() -> int:
 
 USAGE = f"""IBVAP launcher
 
-  python app.py              open the control panel (window, or menu without Tk)
+  python app.py              open the control panel (Qt if installed, else a basic window)
   python app.py <action>     run one action and exit
   python app.py --menu       force the text menu
+  python app.py --tk         force the basic window (skip the Qt panel)
   python app.py --help       this message
 
 Actions:
@@ -881,6 +912,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     force_menu = bool(argv) and argv[0] == "--menu"
+    force_tk = bool(argv) and argv[0] == "--tk"
+    if not force_menu and not force_tk and run_panel() == 0:
+        return 0
     if not force_menu and run_gui() == 0:
         return 0
     if not force_menu:

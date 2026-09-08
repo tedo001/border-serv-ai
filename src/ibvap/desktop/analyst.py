@@ -65,6 +65,7 @@ from ibvap.events.annotate import annotate_frame
 from ibvap.ingest.simulator import SCENARIOS
 from ibvap.mlops.registry import ModelRegistry
 from ibvap.pipeline.models import build_model_bundle
+from ibvap.vision import supervision_ops
 
 log = get_logger(__name__)
 
@@ -220,6 +221,14 @@ class PipelineBridge(QObject):
         #: Overlay geometry, replaced whenever the analyst edits it.
         self._zones: tuple[Any, ...] = ()
         self._tripwires: tuple[Any, ...] = ()
+        # Supervision draws corner boxes, rounded labels and identity traces.
+        # Held for the life of the run rather than rebuilt per frame: the trace
+        # annotator keeps its own history keyed by tracker id, so a fresh one
+        # each frame would silently draw no trails at all.
+        self.renderer = (
+            supervision_ops.SupervisionRenderer()
+            if supervision_ops.AVAILABLE else None
+        )
 
     def on_frame(self, frame: Any, tracks: list[Track]) -> None:
         """Called on the worker thread once per processed frame."""
@@ -242,11 +251,17 @@ class PipelineBridge(QObject):
             "counts": counts,
             "resolution": f"{frame.image.shape[1]}x{frame.image.shape[0]}",
         }
-        canvas = annotate_frame(
-            frame.image, tracks=tracks,
-            zones=list(self._zones), tripwires=list(self._tripwires),
-            timestamp=frame.timestamp,
-        )
+        if self.renderer is not None:
+            canvas = self.renderer.annotate(
+                frame.image, tracks,
+                zones=list(self._zones), tripwires=list(self._tripwires),
+            )
+        else:
+            canvas = annotate_frame(
+                frame.image, tracks=tracks,
+                zones=list(self._zones), tripwires=list(self._tripwires),
+                timestamp=frame.timestamp,
+            )
         with self._lock:
             if self._latest is not None:
                 self.dropped += 1

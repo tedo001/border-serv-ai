@@ -6,7 +6,6 @@ import datetime
 
 import numpy as np
 import pytest
-from tests.conftest import make_track
 
 from ibvap.analytics.engine import AnalyticsEngine, EventGate
 from ibvap.core.config import (
@@ -17,6 +16,7 @@ from ibvap.core.config import (
     ZoneConfig,
 )
 from ibvap.core.types import Event, EventType, Frame, ObjectClass, Severity
+from tests.conftest import make_track
 
 WIDTH, HEIGHT = 1280, 720
 
@@ -324,3 +324,61 @@ class TestEventGate:
             gate.admit(self._event(i), 0.0, now=i * 0.01)
         gate.prune(now=10_000.0, max_age=60.0)
         assert gate._last_seen == {}
+
+
+class TestPresenceEventTypes:
+    """Presence must name what it saw.
+
+    Collapsing everything that is not a vehicle into ``person_detected`` puts
+    cattle and unplaceable objects into the one feed an operator filters on
+    when they want people - which is exactly when it matters most. Running a
+    real detector is what surfaced this: RT-DETR labels a thing it cannot place
+    as a low-confidence COCO class, which arrived in the control room as a
+    person.
+    """
+
+    def _fire(self, camera_config, settings, frame, obj_class, *, suppress=("animal",)):
+        camera_config.rules = [RuleConfig(id="presence", type="presence")]
+        camera_config.zones = []
+        camera_config.tripwires = []
+        analytics = settings.analytics.model_copy(
+            update={"ignore_classes": list(suppress)}
+        )
+        engine = AnalyticsEngine(camera_config, analytics)
+        return engine.process(frame, [make_track(1, 100, 100, obj_class=obj_class)])
+
+    def test_a_person_is_a_person(self, camera_config, settings, frame) -> None:
+        events = self._fire(camera_config, settings, frame, ObjectClass.PERSON)
+        assert [e.event_type for e in events] == [EventType.PERSON_DETECTED]
+
+    def test_a_vehicle_is_a_vehicle(self, camera_config, settings, frame) -> None:
+        events = self._fire(camera_config, settings, frame, ObjectClass.TRUCK)
+        assert [e.event_type for e in events] == [EventType.VEHICLE_DETECTED]
+
+    def test_an_animal_is_not_reported_as_a_person(
+        self, camera_config, settings, frame
+    ) -> None:
+        """With suppression off, livestock is still not a person.
+
+        Suppression is the usual answer on a fence line, but a counting camera
+        on a grazing route wants the animal reported - and reported as what it
+        is.
+        """
+        events = self._fire(
+            camera_config, settings, frame, ObjectClass.ANIMAL, suppress=()
+        )
+        assert [e.event_type for e in events] == [EventType.OBJECT_DETECTED]
+
+    def test_livestock_suppression_still_silences_the_animal(
+        self, camera_config, settings, frame
+    ) -> None:
+        events = self._fire(camera_config, settings, frame, ObjectClass.ANIMAL)
+        assert events == []
+
+    def test_an_unplaceable_object_is_not_reported_as_a_person(
+        self, camera_config, settings, frame
+    ) -> None:
+        events = self._fire(
+            camera_config, settings, frame, ObjectClass.UNKNOWN, suppress=()
+        )
+        assert [e.event_type for e in events] == [EventType.OBJECT_DETECTED]

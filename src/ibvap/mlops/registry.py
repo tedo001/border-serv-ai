@@ -21,6 +21,8 @@ artefact produced this alert*. Three properties follow:
 from __future__ import annotations
 
 import hashlib
+import re
+import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -61,6 +63,10 @@ class ModelVersion:
     sha256: str = ""
     #: Output layout for detector-family models, e.g. ``yolo26``.
     layout: str = "auto"
+    #: Which runtime loads this version. ``onnx`` is what goes to a post;
+    #: ``ultralytics`` runs a Torch checkpoint directly, for development and
+    #: evaluation, and is the source the ONNX artefact is exported from.
+    runtime: str = "onnx"
     #: Model input as ``(width, height)``; ``None`` reads it from the graph.
     input_size: tuple[int, int] | None = None
     #: Ordered class names the model emits.
@@ -183,6 +189,7 @@ class ModelRegistry:
                     file=str(spec.get("file", "")),
                     sha256=str(spec.get("sha256", "")).lower(),
                     layout=str(spec.get("layout", "auto")),
+                    runtime=str(spec.get("runtime", "onnx")),
                     input_size=(int(size[0]), int(size[1])) if size else None,
                     classes=list(spec.get("classes") or []),
                     metrics={k: float(v) for k, v in (spec.get("metrics") or {}).items()},
@@ -213,8 +220,20 @@ class ModelRegistry:
         return entry
 
     def artefact_path(self, version: ModelVersion) -> Path:
+        """Where this version's file lives on disk.
+
+        Torch checkpoints go to ``models/weights`` rather than ``models``:
+        they are downloaded rather than shipped, so keeping them in their own
+        directory is what makes ``models/`` reviewable as the set of artefacts
+        a site build actually carries.
+        """
         path = Path(version.file)
-        return path if path.is_absolute() else Path(self.config.models_dir) / path
+        if path.is_absolute():
+            return path
+        root = Path(self.config.models_dir)
+        if version.runtime == "ultralytics":
+            root = root / "weights"
+        return root / path
 
     def verify(self, name: str, version: str = "latest") -> ModelVersion:
         """Resolve a version and verify its artefact on disk.
@@ -255,6 +274,22 @@ class ModelRegistry:
 
         self._verified.add(cache_key)
         return resolved
+
+    def resolve_spec(self, spec: ModelSpec) -> ModelVersion | None:
+        """Resolve a role binding to a declaration, without touching any file.
+
+        :meth:`load_backend` verifies and loads an ONNX artefact. A version
+        whose runtime is not ONNX has no ONNX artefact to verify, so a caller
+        choosing between runtimes needs the declaration *before* the file
+        check rather than as a consequence of it failing.
+        """
+        if not spec.name:
+            return None
+        try:
+            return self.get(spec.name).resolve(spec.version)
+        except (ModelNotFoundError, ConfigError) as exc:
+            log.warning("model_unresolved", model=spec.name, error=str(exc))
+            return None
 
     # -- backends ---------------------------------------------------------- #
 
@@ -317,6 +352,7 @@ class ModelRegistry:
                     "role": entry.role,
                     "version": version.version,
                     "layout": version.layout,
+                    "runtime": version.runtime,
                     "classes": len(version.classes),
                     "metrics": version.metrics,
                     "enabled": version.enabled,
@@ -394,13 +430,44 @@ def register_model(
     if make_default or not entry.get("default"):
         entry["default"] = version
 
+    entry["versions"][version]["runtime"] = metadata.get("runtime", "onnx")
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(yaml.safe_dump(document, sort_keys=False, width=100), encoding="utf-8")
+    path.write_text(_splice_entry(path, name, entry), encoding="utf-8")
     log.info(
         "model_registered",
         name=name, version=version, role=role,
         layout=metadata.get("layout"), default=entry.get("default"),
     )
+
+
+def _splice_entry(path: Path, name: str, entry: dict[str, Any]) -> str:
+    """Rewrite one model's block, leaving the rest of the file byte-for-byte.
+
+    Round-tripping the whole document through ``yaml.safe_dump`` is the obvious
+    implementation and the wrong one: it discards every comment in the file.
+    The registry's comments are not decoration - they document the output
+    layouts, the runtimes and how to populate the file, and losing them the
+    first time anyone runs ``ibvap models register`` guts the most useful part
+    of the artefact. So only the named entry is re-emitted, spliced into the
+    original text.
+    """
+    block = yaml.safe_dump({name: entry}, sort_keys=False, width=100, allow_unicode=True)
+    block = textwrap.indent(block, "  ").rstrip() + "\n"
+
+    if not path.is_file():
+        return f"version: 1\n\nmodels:\n\n{block}"
+
+    text = path.read_text(encoding="utf-8")
+    if "models:" not in text:
+        return text.rstrip() + f"\n\nmodels:\n\n{block}"
+
+    existing = re.search(
+        rf"^  {re.escape(name)}:\n(?:(?:  [ \t].*)?\n)*", text, re.MULTILINE
+    )
+    if existing:
+        return text[: existing.start()] + block + text[existing.end() :]
+    return text.rstrip() + "\n\n" + block
 
 
 def write_model_card(

@@ -71,10 +71,37 @@ cameras:
       - { id: presence, type: presence }
 ```
 
+## Real detection in two commands
+
+Out of the box the platform runs on classical motion detection and says so.
+To give it real weights:
+
+```bash
+pip install -e '.[torch,sv]'      # RT-DETR + the live-view annotators
+ibvap analyst                     # pick rtdetr-l, press Start Analysis
+```
+
+The checkpoint downloads into `models/weights` on first use. For a border post,
+export the same weights to ONNX so the node needs no Torch at all:
+
+```bash
+ibvap models fetch rtdetr-l       # download -> export ONNX -> hash -> register
+```
+
+Both runtimes carry the same weights and agree to within 0.006 of score and two
+pixels of box on the same frame, so a threshold tuned in the console means the
+same thing in the field.
+
 **Running in PyCharm?** Follow [`docs/PYCHARM.md`](docs/PYCHARM.md) — a
 step-by-step guide from clone to live alerts.
 
-## Three consoles
+## Three consoles and a control panel
+
+**Control panel** (`python app.py`) — one window for the whole platform: set up
+the environment, start and stop the node, open any console, run the tests,
+benchmark the machine. It shows the node's live status, its detector mode and
+every camera while it runs. On a bare checkout it falls back to a plain window
+so it can install the environment that the real one needs.
 
 **Live analysis** (`ibvap analyst`) — the quickest way to see the platform
 work. One window: pick a source (an RTSP camera, a video file, or a built-in
@@ -133,6 +160,7 @@ Remote border posts are not data centres, and the design reflects that:
 ibvap serve      --config configs/site.yaml   # run a node
 ibvap console    --node http://…              # desktop operator console
 ibvap analyst                                 # live analysis console
+ibvap models fetch rtdetr-l                   # real weights -> ONNX -> registry
 ibvap validate   configs/site.yaml            # check a site file
 ibvap probe      rtsp://…                     # test a camera before configuring it
 ibvap benchmark  --resolution 1920x1080       # how many cameras this box can carry

@@ -115,32 +115,7 @@ def build_model_bundle(
             metrics.set_model_info(role, name, version, mode)
 
     # -- object detector --------------------------------------------------- #
-    loaded = registry.load_backend(models.detector)
-    if loaded is not None:
-        backend, version = loaded
-        bundle.detector = ObjectDetector(
-            backend,
-            class_names=version.classes or _default_classes(),
-            score_threshold=models.detector.score_threshold,
-            nms_threshold=models.detector.nms_threshold,
-            input_size=version.input_size,
-            layout=version.layout,
-            min_height_fraction=settings.analytics.min_object_height_fraction,
-        )
-        record("detector", models.detector.name or "", version.version, version.layout, "neural")
-    elif models.allow_stub_fallback:
-        # Per-camera instances are created by the worker; this one exists so a
-        # single-camera embedded use (the desktop console) works out of the box.
-        bundle.detector = MotionDetector(
-            min_height_fraction=settings.analytics.min_object_height_fraction
-        )
-        record("detector", "motion-fallback", "classical", "n/a", "motion_fallback")
-        log.warning(
-            "detector_degraded",
-            detail="no neural detector artefact; using classical motion detection",
-        )
-    else:
-        log.error("detector_unavailable", detail="no artefact and stub fallback disabled")
+    _build_detector(bundle, settings, registry, record)
 
     # -- face pipeline ----------------------------------------------------- #
     if any(cam.face_enabled for cam in settings.cameras) or not settings.cameras:
@@ -227,3 +202,85 @@ def _default_classes() -> tuple[str, ...]:
     from ibvap.vision.detector import COCO80
 
     return COCO80
+
+
+def _build_detector(
+    bundle: ModelBundle,
+    settings: Settings,
+    registry: ModelRegistry,
+    record: Any,
+) -> None:
+    """Choose the detector runtime, most trustworthy first.
+
+    Three runtimes, in descending order of what they promise:
+
+    ``ultralytics``
+        A real Torch checkpoint - RT-DETR or YOLO on published weights. This
+        is the development and evaluation runtime, and the source the ONNX
+        artefact is exported from.
+    ``onnx``
+        A verified, checksummed artefact. This is what a post runs.
+    motion
+        Classical background subtraction. Not a model: a way to keep detecting
+        *something* on a node whose artefacts never arrived, while saying so.
+
+    Falling from one to the next is always logged. A node that silently ran the
+    weakest option would report healthy while missing people.
+    """
+    models = settings.models
+    declared = registry.resolve_spec(models.detector)
+
+    if declared is not None and declared.enabled and declared.runtime == "ultralytics":
+        try:
+            from ibvap.vision.ultralytics_detector import UltralyticsDetector
+
+            bundle.detector = UltralyticsDetector(
+                declared.file or f"{models.detector.name}.pt",
+                score_threshold=models.detector.score_threshold,
+                nms_threshold=models.detector.nms_threshold,
+                imgsz=(declared.input_size or (640, 640))[0],
+                models_dir=models.models_dir,
+                min_height_fraction=settings.analytics.min_object_height_fraction,
+            )
+            record(
+                "detector", models.detector.name or "", declared.version,
+                declared.layout, bundle.detector.mode,
+            )
+            return
+        except Exception as exc:
+            # A missing extra or an unreachable download is a degradation, not
+            # a crash: ONNX and motion detection are still below this.
+            log.warning(
+                "ultralytics_detector_unavailable",
+                model=models.detector.name, error=str(exc),
+            )
+
+    loaded = registry.load_backend(models.detector)
+    if loaded is not None:
+        backend, version = loaded
+        bundle.detector = ObjectDetector(
+            backend,
+            class_names=version.classes or _default_classes(),
+            score_threshold=models.detector.score_threshold,
+            nms_threshold=models.detector.nms_threshold,
+            input_size=version.input_size,
+            layout=version.layout,
+            min_height_fraction=settings.analytics.min_object_height_fraction,
+        )
+        record("detector", models.detector.name or "", version.version, version.layout, "neural")
+        return
+
+    if models.allow_stub_fallback:
+        # Per-camera instances are created by the worker; this one exists so a
+        # single-camera embedded use (the desktop console) works out of the box.
+        bundle.detector = MotionDetector(
+            min_height_fraction=settings.analytics.min_object_height_fraction
+        )
+        record("detector", "motion-fallback", "classical", "n/a", "motion_fallback")
+        log.warning(
+            "detector_degraded",
+            detail="no neural detector artefact; using classical motion detection",
+        )
+        return
+
+    log.error("detector_unavailable", detail="no artefact and stub fallback disabled")

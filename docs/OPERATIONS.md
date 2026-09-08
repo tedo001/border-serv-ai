@@ -105,3 +105,46 @@ Back up, in order of importance:
 2. The database — events, users, watchlists, audit trail.
 3. `models/` plus `registry.yaml` — must travel together.
 4. Evidence — largest, and usually subject to a retention policy anyway.
+
+---
+
+## Detector runtimes
+
+A node picks its detector from the registry entry bound in `models.detector`,
+and the entry's `runtime` decides how it loads. Three are tried in order, most
+trustworthy first, and every fall is logged:
+
+| Order | Runtime | Reported as | Needs |
+|---|---|---|---|
+| 1 | `ultralytics` | `ultralytics:rtdetr` / `ultralytics:yolo` | the `torch` extra |
+| 2 | `onnx` | `neural` | a verified artefact in `models/` |
+| 3 | — | `motion_fallback` | nothing |
+
+`/health`, both consoles, the control panel and the `ibvap_model_info` metric
+all carry the mode, and `degraded` is true for anything below a real model. A
+node that quietly ran the weakest option would report healthy while missing
+people, so it never does.
+
+### Putting real weights on a node
+
+```bash
+# development and evaluation - Torch, on the machine doing the tuning
+pip install -e '.[torch]'
+#   models.detector.name: rtdetr-l
+
+# the post - ONNX Runtime alone, no Torch anywhere on the node
+ibvap models fetch rtdetr-l
+#   models.detector.name: rtdetr-l-onnx
+```
+
+`fetch` downloads the checkpoint, exports the ONNX graph, hashes it and writes
+the registry entry. The checksum it records is of *your* export, so run it on
+the build host and ship `models/` with the site build; a mismatch at load time
+is fatal by design.
+
+### Air-gapped posts
+
+Nothing here reaches the network at run time except the first checkpoint
+download. To prepare a post that cannot reach one, copy the file into
+`models/weights/` (Torch) or `models/detector/` (ONNX) before first start; the
+registry entry names exactly what it expects.

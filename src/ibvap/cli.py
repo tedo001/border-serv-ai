@@ -110,6 +110,26 @@ def _build_parser() -> argparse.ArgumentParser:
     model_verify.add_argument("--config", "-c")
     model_verify.set_defaults(handler=_models_verify)
 
+    model_fetch = model_actions.add_parser(
+        "fetch",
+        help="download a pretrained checkpoint, export ONNX and register it",
+    )
+    model_fetch.add_argument(
+        "checkpoint",
+        help="Ultralytics checkpoint, e.g. rtdetr-l.pt, rtdetr-x.pt, yolo11s.pt",
+    )
+    model_fetch.add_argument("--name", help="registry name (default: the checkpoint stem)")
+    model_fetch.add_argument("--version", default="coco", help="registry version label")
+    model_fetch.add_argument("--imgsz", type=int, default=640, help="export input size")
+    model_fetch.add_argument("--opset", type=int, default=17, help="ONNX opset")
+    model_fetch.add_argument("--registry", default="models/registry.yaml")
+    model_fetch.add_argument("--models-dir", default="models")
+    model_fetch.add_argument(
+        "--no-export", action="store_true",
+        help="download the checkpoint only; do not export or register ONNX",
+    )
+    model_fetch.set_defaults(handler=_models_fetch)
+
     model_register = model_actions.add_parser(
         "register", help="add an ONNX artefact to the registry"
     )
@@ -416,6 +436,82 @@ def _models_verify(args: Any) -> int:
     if failures:
         print(f"\n{failures} artefact(s) failed verification", file=sys.stderr)
     return 1 if failures else 0
+
+
+def _models_fetch(args: Any) -> int:
+    """Turn a published checkpoint into a registered ONNX artefact.
+
+    This is the whole model lifecycle in one command, and it is the step that
+    makes the platform's detection real rather than declared:
+
+        download  ->  run it (Torch)  ->  export ONNX  ->  hash  ->  register
+
+    The Torch runtime is for development and evaluation; the ONNX artefact it
+    exports is what goes to a post, on a node that never needs Torch. Both
+    carry the same weights, so a threshold tuned in the analyst console means
+    the same thing in the field.
+    """
+    from ibvap.mlops.registry import register_model, sha256_file
+    from ibvap.vision.ultralytics_detector import (
+        UltralyticsDetector,
+        checkpoint_classes,
+        export_onnx,
+        is_rtdetr,
+    )
+
+    checkpoint = args.checkpoint if args.checkpoint.endswith(".pt") else f"{args.checkpoint}.pt"
+    name = args.name or Path(checkpoint).stem
+    models_dir = Path(args.models_dir)
+
+    print(f"fetching {checkpoint} …")
+    resolved = UltralyticsDetector._resolve(checkpoint, models_dir)
+    size_mb = round(resolved.stat().st_size / 1024**2, 2)
+    print(f"  checkpoint  {resolved}  ({size_mb} MB)")
+
+    classes = checkpoint_classes(checkpoint, models_dir=models_dir)
+    print(f"  classes     {len(classes)}")
+
+    if args.no_export:
+        print("\n--no-export: the Torch runtime can use this checkpoint now.")
+        print(f"Point a camera at it with:  models.detector.name: {name}")
+        return 0
+
+    layout = "rtdetr" if is_rtdetr(checkpoint) else "yolov8"
+    destination = models_dir / "detector" / f"{Path(checkpoint).stem}-{args.version}.onnx"
+    print(f"exporting ONNX (imgsz={args.imgsz}, opset={args.opset}) …")
+    export_onnx(
+        checkpoint, destination,
+        imgsz=args.imgsz, opset=args.opset, models_dir=models_dir,
+    )
+
+    metadata = {
+        "file": str(destination.relative_to(models_dir)),
+        "sha256": sha256_file(destination),
+        "layout": layout,
+        "runtime": "onnx",
+        "input_size": [args.imgsz, args.imgsz],
+        "classes": classes,
+        "size_mb": round(destination.stat().st_size / 1024**2, 2),
+        "provenance": {
+            "exported_from": Path(checkpoint).name,
+            "exporter": "ultralytics",
+            "opset": args.opset,
+        },
+    }
+    register_model(
+        args.registry, f"{name}-onnx", args.version, metadata,
+        role="detector", make_default=True,
+    )
+    print(f"  artefact    {destination}  ({metadata['size_mb']} MB)")
+    print(f"  sha256      {metadata['sha256']}")
+    print(f"\nregistered {name}-onnx:{args.version} in {args.registry}")
+    print(
+        "\nThis artefact runs on ONNX Runtime alone - a post needs no Torch. "
+        "Evaluate it on labelled footage from a representative site before "
+        "commissioning it.",
+        file=sys.stderr,
+    )
+    return 0
 
 
 def _models_register(args: Any) -> int:

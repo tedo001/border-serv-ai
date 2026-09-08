@@ -43,6 +43,12 @@ dependencies = [
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-cov", "ruff", "mypy", "types-PyYAML"]
 gpu = ["onnxruntime-gpu>=1.17"]
 desktop = ["PyQt6>=6.6"]
+# Real pretrained detectors (RT-DETR, YOLO) on Torch. This is the development
+# and evaluation runtime and the source ONNX artefacts are exported from; a
+# post runs the exported .onnx on ONNX Runtime alone and needs none of this.
+torch = ["ultralytics>=8.3", "onnx>=1.16", "onnxslim>=0.1"]
+# Supervision: detection interchange and the live-view annotators.
+sv = ["supervision>=0.25"]
 postgres = ["psycopg[binary]>=3.1"]
 
 [project.scripts]
@@ -51,6 +57,7 @@ ibvap = "ibvap.cli:main"
 [project.gui-scripts]
 ibvap-console = "ibvap.desktop.app:main"
 ibvap-analyst = "ibvap.desktop.analyst:main"
+ibvap-panel = "ibvap.desktop.launcher:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

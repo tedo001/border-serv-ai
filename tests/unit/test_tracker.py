@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import pytest
-from tests.conftest import make_detection
 
 from ibvap.core.types import ObjectClass, TrackState
 from ibvap.vision.tracker import ByteTracker, KalmanBoxTracker
+from tests.conftest import make_detection
 
 
 class TestKalman:

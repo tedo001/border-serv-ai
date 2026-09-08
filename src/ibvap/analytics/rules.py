@@ -573,6 +573,13 @@ class NightMovementRule(Rule):
         return events
 
 
+#: Presence maps a track's category onto the event type that names it.
+_PRESENCE_EVENT: dict[ObjectCategory, EventType] = {
+    ObjectCategory.HUMAN: EventType.PERSON_DETECTED,
+    ObjectCategory.VEHICLE: EventType.VEHICLE_DETECTED,
+}
+
+
 @register_rule
 class PresenceRule(Rule):
     """Informational: records that an object of interest appeared.
@@ -600,12 +607,15 @@ class PresenceRule(Rule):
                 continue
             state["reported"] = True
 
-            is_vehicle = track.category is ObjectCategory.VEHICLE
+            # Report what was actually seen. Collapsing everything that is
+            # not a vehicle into `person_detected` puts cattle and unplaceable
+            # objects into the one feed an operator filters on when they want
+            # people, which is precisely when it matters most.
             events.append(
                 Event(
                     camera_id=ctx.camera_id,
-                    event_type=(
-                        EventType.VEHICLE_DETECTED if is_vehicle else EventType.PERSON_DETECTED
+                    event_type=_PRESENCE_EVENT.get(
+                        track.category, EventType.OBJECT_DETECTED
                     ),
                     severity=self._severity or Severity.INFO,
                     timestamp=ctx.timestamp,

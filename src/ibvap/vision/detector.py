@@ -109,6 +109,30 @@ class BaseDetector(ABC):
         """Release resources held by the detector."""
 
 
+#: Widest a detection head's feature axis is ever expected to be: 4 box
+#: components plus a class score each, and no realistic border deployment
+#: carries more than ~120 classes. Used to tell a feature axis from a query
+#: axis when an exporter writes them in the other order.
+_MAX_FEATURE_COLUMNS = 128
+
+
+def _is_decoded_rtdetr(pred: np.ndarray) -> bool:
+    """True when an RT-DETR export has already argmaxed its class head.
+
+    Six columns is ambiguous on its own: it is ``[cx, cy, w, h, conf, class]``
+    for a decoded export, and ``4 + nc`` for a two-class model. The class
+    column settles it - class indices are whole numbers and a real model has
+    more than two classes, so a column of integers reaching past 1.0 cannot be
+    a probability.
+    """
+    if pred.shape[1] != 6:
+        return False
+    class_column = pred[:, 5]
+    if class_column.max() <= 1.0:
+        return False  # a two-class model's second probability, not an index
+    return bool(np.allclose(class_column, np.round(class_column), atol=1e-4))
+
+
 class ObjectDetector(BaseDetector):
     """YOLO-family ONNX detector with automatic output-layout handling."""
 
@@ -280,37 +304,53 @@ class ObjectDetector(BaseDetector):
         )
 
     def _decode_rtdetr(self, arr: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Decode RT-DETR output: ``(queries, 4 + nc)``.
+        """Decode RT-DETR output, in either of the two forms exporters emit.
 
-        Two things differ from every YOLO layout and both are silent failures
-        if missed.
+        Three things differ from every YOLO layout, and each is a silent
+        failure if missed - the boxes still look like boxes, they are just the
+        wrong ones.
 
         **Boxes are normalised to [0, 1]**, not in model-input pixels. A YOLO
         decoder applied to this output produces boxes clustered in the top-left
-        few pixels of the frame - detections that look plausible in a list and
-        are nonsense on screen. They are scaled to input pixels here so the
-        letterbox inverse downstream sees the same units it does for YOLO.
+        corner: plausible in a list, nonsense on screen.
 
         **There is no objectness and no NMS.** RT-DETR is a set predictor: each
         of its (typically 300) queries emits at most one object, and duplicate
         suppression is learned rather than applied afterwards.
+
+        **The class head may already be argmaxed.** Ultralytics exports
+        ``(300, 6)`` as ``[cx, cy, w, h, confidence, class_id]``, while the
+        reference implementation exports ``(300, 4 + nc)`` of per-class scores.
+        Reading the first as the second is what a wrong guess costs: column 5
+        holds a class *index* up to 79, so treating it as a logit puts every
+        query through a sigmoid, and 300 phantom detections come back at
+        score 0.51 - sigmoid(0) - all labelled with class 0.
         """
         pred = arr
-        # Some exporters emit (4 + nc, queries); transpose to queries-major.
-        if pred.shape[0] < pred.shape[1] and pred.shape[0] <= 128:
+        # Some exporters emit (4 + nc, queries) rather than queries-major.
+        # The test is which axis looks like the *query* axis: a detection head
+        # has hundreds of queries and at most a few dozen feature columns, so
+        # only a second axis that is clearly too long to be features means the
+        # tensor is the wrong way round. Comparing the two lengths directly -
+        # "rows < columns" - flips any small tensor, which silently mangles a
+        # frame that produced only a handful of predictions.
+        if pred.shape[0] <= _MAX_FEATURE_COLUMNS < pred.shape[1]:
             pred = pred.T
 
         if pred.shape[1] <= 4:
             return np.empty((0, 4)), np.empty(0), np.empty(0, dtype=np.int64)
 
-        cls_scores = pred[:, 4:]
-        # Logits rather than probabilities in some exports: if anything falls
-        # outside [0, 1] the head clearly has no sigmoid, so apply one.
-        if cls_scores.min() < 0.0 or cls_scores.max() > 1.0:
-            cls_scores = 1.0 / (1.0 + np.exp(-cls_scores))
-
-        class_ids = cls_scores.argmax(axis=1)
-        scores = cls_scores[np.arange(len(pred)), class_ids]
+        if _is_decoded_rtdetr(pred):
+            scores = pred[:, 4].astype(np.float64)
+            class_ids = pred[:, 5].astype(np.int64)
+        else:
+            cls_scores = pred[:, 4:]
+            # Logits rather than probabilities in some exports: if anything
+            # falls outside [0, 1] the head clearly has no sigmoid.
+            if cls_scores.min() < 0.0 or cls_scores.max() > 1.0:
+                cls_scores = 1.0 / (1.0 + np.exp(-cls_scores))
+            class_ids = cls_scores.argmax(axis=1).astype(np.int64)
+            scores = cls_scores[np.arange(len(pred)), class_ids].astype(np.float64)
 
         mask = scores >= self.score_threshold
         if not mask.any():
@@ -321,11 +361,7 @@ class ObjectDetector(BaseDetector):
         # Normalised cxcywh -> input-pixel cxcywh, then to corner form.
         boxes[:, [0, 2]] *= width
         boxes[:, [1, 3]] *= height
-        return (
-            xywh_to_xyxy(boxes),
-            scores[mask].astype(np.float64),
-            class_ids[mask].astype(np.int64),
-        )
+        return xywh_to_xyxy(boxes), scores[mask], class_ids[mask]
 
     def _decode_end_to_end(self, arr: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Decode ``(N, 6)`` xyxy output from an end-to-end / pre-NMS graph.

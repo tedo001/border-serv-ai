@@ -87,12 +87,18 @@ class OpenCVSource(VideoSource):
         open_timeout_seconds: float = 15.0,
         read_timeout_seconds: float = 15.0,
         buffer_size: int = 1,
+        loop: bool = True,
     ) -> None:
         self.url = url
         self.rtsp_transport = rtsp_transport
         self.open_timeout = open_timeout_seconds
         self.read_timeout = read_timeout_seconds
         self.buffer_size = buffer_size
+        #: Rewind a finite file at its end rather than reporting the stream
+        #: dead. Only ever applied to files - a live camera that stops
+        #: delivering has genuinely failed and must be reconnected.
+        self.loop = loop
+        self.loops = 0
         self._capture: cv2.VideoCapture | None = None
         self._info = SourceInfo()
         self._last_read = 0.0
@@ -163,11 +169,30 @@ class OpenCVSource(VideoSource):
     def _is_rtsp(self) -> bool:
         return self.url.lower().startswith(("rtsp://", "rtsps://"))
 
+    @property
+    def _is_network(self) -> bool:
+        return self.url.lower().startswith(
+            ("rtsp://", "rtsps://", "http://", "https://", "rtmp://", "udp://", "tcp://")
+        )
+
+    @property
+    def _can_rewind(self) -> bool:
+        """Whether hitting the end of this source means replay, not failure."""
+        return self.loop and not self._is_network and self._info.frame_count > 1
+
     def read(self) -> np.ndarray:
         if self._capture is None:
             raise StreamError("read() called on a source that is not open")
 
         ok, frame = self._capture.read()
+        if (not ok or frame is None) and self._can_rewind:
+            # A file has an end; a camera does not. Rewinding is replay, so the
+            # camera must not report itself offline and then online again - a
+            # cycle that produced a camera_offline/camera_online alert pair on
+            # every lap of a clip and buried the analytics events between them.
+            self._capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            self.loops += 1
+            ok, frame = self._capture.read()
         if not ok or frame is None:
             raise StreamClosedError(f"stream ended or failed: {_redact(self.url)}")
         if frame.size == 0:
@@ -269,6 +294,7 @@ def build_source(
     *,
     rtsp_transport: str = "tcp",
     read_timeout_seconds: float = 15.0,
+    loop_files: bool = True,
 ) -> VideoSource:
     """Construct the right source for a URL.
 
@@ -315,7 +341,8 @@ def build_source(
         )
 
     return OpenCVSource(
-        url, rtsp_transport=rtsp_transport, read_timeout_seconds=read_timeout_seconds
+        url, rtsp_transport=rtsp_transport, read_timeout_seconds=read_timeout_seconds,
+        loop=loop_files,
     )
 
 

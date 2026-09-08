@@ -108,6 +108,40 @@ filename, and a checksum mismatch is fatal.
 | `face_detector` | single-class YOLO | Find faces inside person crops | Haar cascade if available |
 | `face_embedder` | ArcFace-style 512-d | Embed for watchlist matching | Face recognition disabled |
 
+### Two runtimes, one pipeline
+
+Detection runs on one of two runtimes, and which one is a property of the
+registry entry rather than of the code:
+
+| Runtime | What it is | Where it belongs |
+|---|---|---|
+| `ultralytics` | A published Torch checkpoint - RT-DETR or YOLO - run directly | Development, evaluation, tuning |
+| `onnx` | A verified, checksummed ONNX artefact on ONNX Runtime | A border post |
+
+The point of keeping both is that the first produces the second:
+
+```
+ibvap models fetch rtdetr-l
+  download rtdetr-l.pt      ->  models/weights/
+  export ONNX               ->  models/detector/rtdetr-l-coco.onnx
+  hash and register         ->  models/registry.yaml
+```
+
+A post then binds the ONNX entry and never installs Torch. Both carry the same
+weights, so a threshold tuned in the analyst console means the same thing in
+the field - and that agreement is checked rather than assumed. On the same
+photograph the two runtimes return the same five objects, with scores within
+0.006 and boxes within two pixels.
+
+This matters more than it sounds. Before the Torch runtime existed there was
+no way to run a real RT-DETR graph through this repository, and the RT-DETR
+ONNX decoder had never been executed against one. It was wrong: it assumed the
+reference head's `(queries, 4 + nc)` per-class scores, while Ultralytics
+exports `(300, 6)` of `[cx, cy, w, h, confidence, class_id]`. Reading the
+second as the first put a class *index* of up to 79 through a sigmoid, and 300
+phantom detections came back at score 0.51 - `sigmoid(0)` - every one labelled
+class 0. Both forms are now decoded and both are pinned by tests.
+
 ### Detector families
 
 | Layout | Output | Notes |
@@ -258,7 +292,7 @@ never quietly discard the record that something happened.
 |---|---|
 | `core/` | Domain types, layered config, geometry, logging, time windows |
 | `ingest/` | Video sources, scenario simulator, resilient reader, bounded queue |
-| `vision/` | ONNX backends, detectors, classifier, tracker, ANPR, face |
+| `vision/` | ONNX and Torch runtimes, detectors, classifier, tracker, ANPR, face, supervision interchange |
 | `analytics/` | Rules and the per-camera engine with its suppression gate |
 | `events/` | Annotation, evidence store, canonical payload |
 | `pipeline/` | Model bundle, camera worker, supervisor |
@@ -266,7 +300,7 @@ never quietly discard the record that something happened.
 | `integrations/` | Signed webhook sink and the store-and-forward dispatcher |
 | `api/` | FastAPI app, auth/RBAC, routers |
 | `ui/` | Browser operator console (no build step, no CDN) |
-| `desktop/` | PyQt6 operator console (zone editor) and live analysis console |
+| `desktop/` | PyQt6 control panel, operator console (zone editor) and live analysis console |
 | `mlops/` | Registry and authoring, benchmark, evaluation, drift |
 | `telemetry/` | Prometheus instrumentation |
 
