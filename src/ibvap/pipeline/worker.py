@@ -46,6 +46,7 @@ from ibvap.pipeline.models import ModelBundle, build_camera_detector
 from ibvap.telemetry.metrics import Metrics
 from ibvap.vision.anpr import PlateWatchlist
 from ibvap.vision.face import FaceGallery
+from ibvap.vision.plate_track import PlateTrackRegistry
 from ibvap.vision.preprocess import enhance_low_light
 from ibvap.vision.tracker import ByteTracker
 
@@ -106,6 +107,12 @@ class CameraWorker:
         self.metrics = metrics
         self.face_gallery = face_gallery or bundle.face_gallery
         self.plate_watchlist = plate_watchlist or PlateWatchlist()
+        #: Plate evidence per vehicle track: a Kalman filter over the plate box
+        #: and a weighted vote over what OCR read from it.
+        self.plate_tracks = PlateTrackRegistry(
+            min_reads=settings.analytics.plate_min_reads,
+            margin=settings.analytics.plate_vote_margin,
+        )
         self.frame_sink = frame_sink
 
         self.detector = build_camera_detector(bundle, camera)
@@ -274,83 +281,152 @@ class CameraWorker:
                 self.stats.reclassified += 1
 
     def _run_anpr(self, frame: Frame, tracks: list[Track]) -> list[Event]:
+        """Accumulate plate evidence across each vehicle's passage.
+
+        A plate is not read once. Every vehicle track carries a Kalman filter
+        over its plate box and a weighted vote over the strings OCR returns,
+        and the event is emitted when one candidate leads by a margin - not on
+        the first frame that produced something plausible. At a gate the
+        vehicle is moving, the plate is thirty pixels tall and half the frames
+        are blurred; a single read is a guess, and "HR26DK8337" versus
+        "HR26DK8837" is the difference between waving a car through and
+        stopping it.
+        """
         assert self.bundle.plate_reader is not None
         events: list[Event] = []
-        min_interval = 5  # frames between retries on the same vehicle
+        min_interval = 2  # frames between localisation attempts on one vehicle
 
-        for track in tracks:
-            if track.category is not ObjectCategory.VEHICLE:
+        vehicles = [t for t in tracks if t.category is ObjectCategory.VEHICLE]
+        # Evidence for a vehicle the tracker has dropped is only a memory leak.
+        self.plate_tracks.retain({t.track_id for t in vehicles})
+
+        for track in vehicles:
+            plate_track = self.plate_tracks.get(track.track_id)
+            if plate_track.decision is not None:
                 continue
-            state = track.attributes.setdefault("_anpr", {"done": False, "last_frame": -99})
-            if state["done"] or frame.index - state["last_frame"] < min_interval:
+            plate_track.predict()
+
+            state = track.attributes.setdefault("_anpr", {"last_frame": -99})
+            if frame.index - state["last_frame"] < min_interval:
                 continue
             state["last_frame"] = frame.index
 
-            result = self.bundle.plate_reader.read_vehicle(frame.image, track.bbox)
-            if result.reading is None:
-                if self.metrics:
-                    self.metrics.plate_read(self.camera.id, result.reason or "no_read")
+            reading = self._read_plate(frame, track, plate_track)
+            if reading is None:
                 continue
 
-            reading = result.reading
-            # Stop retrying once a confident, grammatical read is in hand.
-            if reading.is_actionable:
-                state["done"] = True
-            track.attributes["plate"] = reading.text
-            track.attributes["plate_confidence"] = reading.confidence
             self.stats.plate_reads += 1
+            track.attributes["plate_candidate"] = reading.text
+            track.attributes["plate_confidence"] = reading.confidence
+
+            decision = plate_track.add_reading(reading)
             if self.metrics:
                 self.metrics.plate_read(
                     self.camera.id, "accepted" if reading.valid else "rejected_format"
                 )
+            if decision is None:
+                continue
 
+            events.extend(self._plate_events(frame, track, decision))
+        return events
+
+    def _read_plate(self, frame: Frame, track: Track, plate_track: Any):
+        """One frame's plate reading for one vehicle, or ``None``.
+
+        Localisation first; when it finds nothing and the filter still has a
+        usable estimate, the predicted box is read instead. Once the filter has
+        coasted past its budget the estimate has drifted off the vehicle and
+        reading it would feed OCR a crop of the road surface, which is worse
+        than no crop at all.
+        """
+        reader = self.bundle.plate_reader
+        assert reader is not None
+
+        result = reader.read_vehicle(frame.image, track.bbox)
+        if result.reading is not None:
+            box = result.reading.bbox
+            if box is None:
+                return result.reading
+            smoothed = plate_track.observe(box)
+            if smoothed is not None:
+                result.reading.bbox = smoothed
+                return result.reading
+            # The filter refused the box as implausibly far from the plate, so
+            # whatever OCR read there is a read of some other part of the
+            # vehicle. Voting on it would let a headlight cast a ballot.
+            if self.metrics:
+                self.metrics.plate_read(self.camera.id, "rejected_position")
+            return None
+
+        plate_track.miss()
+        predicted = plate_track.box
+        if predicted is None or plate_track.expired:
+            if self.metrics:
+                self.metrics.plate_read(self.camera.id, result.reason or "no_read")
+            return None
+
+        recovered = reader.read_box(frame.image, predicted)
+        if recovered is None and self.metrics:
+            self.metrics.plate_read(self.camera.id, "no_read_predicted")
+        return recovered
+
+    def _plate_events(self, frame: Frame, track: Track, decision: Any) -> list[Event]:
+        reading = decision.reading
+        track.attributes["plate"] = reading.text
+        events = [Event(
+            camera_id=self.camera.id,
+            event_type=EventType.PLATE_READ,
+            severity=Severity.INFO,
+            timestamp=frame.timestamp,
+            confidence=reading.confidence,
+            message=f"plate read: {reading.text}",
+            rule_id="anpr",
+            track_ids=[track.track_id],
+            boxes=[reading.bbox or track.bbox],
+            frame_index=frame.index,
+            attributes={
+                "plate": reading.text,
+                "raw_text": reading.raw_text,
+                "plate_format": reading.plate_format,
+                "state_code": reading.state_code,
+                "corrections": reading.corrections,
+                "valid": reading.valid,
+                "vehicle_class": track.obj_class.value,
+                # How much evidence the decision rests on, so an operator
+                # reviewing a disputed read can see it rather than infer it.
+                "reads": decision.reads,
+                "total_reads": decision.total_reads,
+                "vote_margin": round(decision.margin, 2)
+                if decision.margin != float("inf") else None,
+                "runner_up": decision.runner_up,
+            },
+        )]
+
+        hit = self.plate_watchlist.check(reading)
+        if hit is not None:
             events.append(Event(
                 camera_id=self.camera.id,
-                event_type=EventType.PLATE_READ,
-                severity=Severity.INFO,
+                event_type=EventType.PLATE_MATCH,
+                severity=Severity.CRITICAL,
                 timestamp=frame.timestamp,
                 confidence=reading.confidence,
-                message=f"plate read: {reading.text}",
-                rule_id="anpr",
+                message=(
+                    f"WATCHLIST VEHICLE {hit.entry.plate} ({hit.entry.category})"
+                ),
+                rule_id="anpr_watchlist",
                 track_ids=[track.track_id],
                 boxes=[reading.bbox or track.bbox],
                 frame_index=frame.index,
                 attributes={
-                    "plate": reading.text,
-                    "raw_text": reading.raw_text,
-                    "plate_format": reading.plate_format,
-                    "state_code": reading.state_code,
-                    "corrections": reading.corrections,
-                    "valid": reading.valid,
-                    "vehicle_class": track.obj_class.value,
+                    "plate": hit.entry.plate,
+                    "category": hit.entry.category,
+                    "reason": hit.entry.reason,
+                    "reference": hit.entry.reference,
+                    "exact_match": hit.exact,
+                    "edit_distance": hit.distance,
+                    "reads": decision.reads,
                 },
             ))
-
-            hit = self.plate_watchlist.check(reading)
-            if hit is not None:
-                events.append(Event(
-                    camera_id=self.camera.id,
-                    event_type=EventType.PLATE_MATCH,
-                    severity=Severity.CRITICAL,
-                    timestamp=frame.timestamp,
-                    confidence=reading.confidence,
-                    message=(
-                        f"WATCHLIST VEHICLE {hit.entry.plate} "
-                        f"({hit.entry.category})"
-                    ),
-                    rule_id="anpr_watchlist",
-                    track_ids=[track.track_id],
-                    boxes=[reading.bbox or track.bbox],
-                    frame_index=frame.index,
-                    attributes={
-                        "plate": hit.entry.plate,
-                        "category": hit.entry.category,
-                        "reason": hit.entry.reason,
-                        "reference": hit.entry.reference,
-                        "exact_match": hit.exact,
-                        "edit_distance": hit.distance,
-                    },
-                ))
         return events
 
     def _run_face(self, frame: Frame, tracks: list[Track]) -> list[Event]:

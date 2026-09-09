@@ -24,6 +24,7 @@ import numpy as np
 from ibvap.core.logging import get_logger
 from ibvap.core.types import BBox
 from ibvap.vision.backends import InferenceBackend
+from ibvap.vision.detector import BaseDetector
 from ibvap.vision.preprocess import crop, sharpness
 
 log = get_logger(__name__)
@@ -310,40 +311,59 @@ class PlateLocator:
         self,
         backend: InferenceBackend | None = None,
         *,
+        detector: BaseDetector | None = None,
         score_threshold: float = 0.4,
         input_size: tuple[int, int] = (640, 640),
         max_candidates: int = 5,
     ) -> None:
+        """Build a locator.
+
+        ``detector`` is any detector the platform can construct - a YOLOv8
+        plate model on the Torch or TensorRT runtime, say. ``backend`` is the
+        older ONNX-only path and is wrapped into one, so both spellings reach
+        the same code.
+        """
         self.backend = backend
         self.score_threshold = score_threshold
         self.input_size = (backend.input_size() if backend else None) or input_size
         self.max_candidates = max_candidates
         self._kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 5))
 
+        if detector is None and backend is not None:
+            from ibvap.vision.detector import ObjectDetector
+
+            # Built once, not per frame. A plate detector is a single-class
+            # detector, so the generic decoding path serves it directly -
+            # constructing it inside `locate` re-resolved the class allowlist
+            # and input size on every vehicle in every frame.
+            detector = ObjectDetector(
+                backend,
+                class_names=("plate",),
+                score_threshold=score_threshold,
+                input_size=self.input_size,
+            )
+        self.detector = detector
+
     @property
     def is_neural(self) -> bool:
-        return self.backend is not None
+        return self.detector is not None
+
+    @property
+    def mode(self) -> str:
+        """What is actually locating plates, for health reporting."""
+        return self.detector.mode if self.detector is not None else "morphological"
 
     def locate(self, image: np.ndarray) -> list[BBox]:
         """Return candidate plate boxes in ``image`` coordinates, best first."""
         if image is None or image.size == 0:
             return []
-        if self.backend is not None:
+        if self.detector is not None:
             return self._locate_neural(image)
         return self._locate_classical(image)
 
     def _locate_neural(self, image: np.ndarray) -> list[BBox]:
-        from ibvap.vision.detector import ObjectDetector
-
-        # A plate detector is a single-class detector; reuse the generic
-        # decoding path rather than duplicating YOLO output handling.
-        detector = ObjectDetector(
-            self.backend,  # type: ignore[arg-type]
-            class_names=("plate",),
-            score_threshold=self.score_threshold,
-            input_size=self.input_size,
-        )
-        found = detector.detect(image)
+        assert self.detector is not None
+        found = self.detector.detect(image)
         found.sort(key=lambda d: d.score, reverse=True)
         return [d.bbox for d in found[: self.max_candidates]]
 
@@ -599,6 +619,27 @@ class PlateReader:
         if best.confidence < self.min_confidence:
             return AnprResult(candidates=candidates, reason="low_confidence")
         return AnprResult(reading=best, candidates=candidates)
+
+    def read_box(self, frame: np.ndarray, plate_box: BBox) -> PlateReading | None:
+        """Read a plate at a box that is already known, skipping localisation.
+
+        This is what makes a Kalman-smoothed plate track worth having: on a
+        frame where the detector loses the plate - a wiper, a pillar, a blown
+        highlight - the filter still says where it is, and OCR gets its chance
+        on a frame that would otherwise have contributed nothing.
+        """
+        if not self.ocr.available:
+            return None
+        plate_crop = crop(frame, plate_box, padding=0.03)
+        if plate_crop.size == 0:
+            return None
+
+        raw_text, ocr_conf = self.ocr.read(self._prepare(plate_crop))
+        if not raw_text:
+            return None
+        reading = normalise_plate(raw_text, ocr_conf)
+        reading.bbox = plate_box
+        return reading
 
     def _prepare(self, plate_crop: np.ndarray) -> np.ndarray:
         """Deskew and upscale a plate crop ahead of OCR."""

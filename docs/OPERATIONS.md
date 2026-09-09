@@ -148,3 +148,91 @@ Nothing here reaches the network at run time except the first checkpoint
 download. To prepare a post that cannot reach one, copy the file into
 `models/weights/` (Torch) or `models/detector/` (ONNX) before first start; the
 registry entry names exactly what it expects.
+
+---
+
+## ANPR: commissioning a plate reader
+
+ANPR is a chain, and each link degrades separately. `/health` reports each one
+under `models`, so check there first when reads are poor.
+
+| Link | Model | Absent means |
+|---|---|---|
+| Vehicle detection | `detector` | no vehicles, so no ANPR at all |
+| Plate localisation | `plate_detector` | morphological search: clean approaches only |
+| Recognition | `plate_ocr` | plates are located but never read |
+
+### 1. Train the plate detector
+
+There is no published licence-plate model worth shipping: no COCO class covers
+it, and plate shape, colour and mounting differ by country and often by site.
+Collect vehicle crops from the posts this will serve, label the plate box, and
+fine-tune YOLOv8 single-class. A few thousand crops that include **night, rain
+and oblique angles** are worth more than tens of thousands of clean daylight
+frontals — localisation degrades far faster with angle than vehicle detection
+does, and the failure is silent: no box, no read, no alert, no log line saying
+a plate was there.
+
+Put the weights at `models/weights/yolov8-plate.pt` and set `enabled: true` on
+the `plate-yolov8` entry in `models/registry.yaml`.
+
+### 2. Register it for the field
+
+```bash
+# ONNX: ships in the site build, runs on ONNX Runtime alone
+ibvap models fetch models/weights/yolov8-plate.pt \
+    --role plate_detector --name plate-yolov8 --format onnx
+
+# TensorRT: built on the node, at commissioning
+ibvap models fetch models/weights/yolov8-plate.pt \
+    --role plate_detector --name plate-yolov8 --format engine --half
+```
+
+Then bind it:
+
+```yaml
+models:
+  plate_detector: { name: plate-yolov8-onnx, score_threshold: 0.4 }
+```
+
+### 3. Tune the vote, not the threshold
+
+A plate is decided by agreement across frames, not by the best single read.
+Two knobs control it:
+
+```yaml
+analytics:
+  plate_min_reads: 3        # frames that must agree
+  plate_vote_margin: 1.5    # how far the leader must lead the runner-up
+```
+
+Raise `plate_min_reads` where vehicles are slow and well lit and you want fewer
+wrong reads; lower it at a fast approach where a vehicle is only in shot for a
+few frames and you would rather have a read than none. Raising the margin is
+the right response to *confusions* — two candidates one character apart — which
+is a different problem from *no reads*, and lowering the OCR threshold will not
+fix it.
+
+Every `plate_read` event carries `reads`, `total_reads`, `vote_margin` and
+`runner_up`. If reads are being disputed, those four numbers say whether the
+platform was confident or lucky.
+
+### Reading the failure reasons
+
+The `ibvap_plate_reads_total` metric is labelled by outcome:
+
+| Label | Meaning |
+|---|---|
+| `accepted` | read and grammatical |
+| `rejected_format` | read but not a valid plate; it votes, but never alone decides |
+| `rejected_position` | the plate box jumped off the plate; the read was refused |
+| `no_plate_located` | localisation found nothing — usually angle or light |
+| `no_text_read` | a plate was located but OCR returned nothing |
+| `low_confidence` | text came back below the OCR threshold |
+| `no_read_predicted` | the Kalman-predicted box also yielded nothing |
+| `ocr_unavailable` | no OCR artefact on this node |
+| `empty_crop` | the vehicle box fell outside the frame |
+
+A high `rejected_position` rate means the plate detector is firing on
+headlights or reflective strips: retrain with hard negatives rather than
+raising its threshold, which will cost real plates too.

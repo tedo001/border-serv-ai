@@ -141,16 +141,7 @@ def build_model_bundle(
 
     # -- ANPR -------------------------------------------------------------- #
     if any(cam.anpr_enabled for cam in settings.cameras) or not settings.cameras:
-        plate_loaded = registry.load_backend(models.plate_detector)
-        locator = PlateLocator(
-            plate_loaded[0] if plate_loaded else None,
-            score_threshold=models.plate_detector.score_threshold,
-        )
-        if plate_loaded:
-            record("plate_detector", models.plate_detector.name or "",
-                   plate_loaded[1].version, plate_loaded[1].layout, "neural")
-        else:
-            record("plate_detector", "morphological-fallback", "classical", "n/a", "classical")
+        locator = _build_plate_locator(settings, registry, record)
 
         ocr_loaded = registry.load_backend(models.plate_ocr)
         ocr = PlateOCR(ocr_loaded[0] if ocr_loaded else None)
@@ -202,6 +193,53 @@ def _default_classes() -> tuple[str, ...]:
     from ibvap.vision.detector import COCO80
 
     return COCO80
+
+
+def _build_plate_locator(
+    settings: Settings,
+    registry: ModelRegistry,
+    record: Any,
+) -> PlateLocator:
+    """Choose how plates are found inside a vehicle crop.
+
+    Same ladder as the object detector, for the same reason: a declared Torch
+    or TensorRT plate model first, then a verified ONNX artefact, then the
+    morphological search - which finds plate-shaped regions by edge density and
+    is genuinely useful, but is not a detector and must not be reported as one.
+    """
+    spec = settings.models.plate_detector
+    declared = registry.resolve_spec(spec)
+
+    if declared is not None and declared.enabled and declared.runtime == "ultralytics":
+        try:
+            from ibvap.vision.ultralytics_detector import UltralyticsDetector
+
+            detector = UltralyticsDetector(
+                declared.file or f"{spec.name}.pt",
+                score_threshold=spec.score_threshold,
+                nms_threshold=spec.nms_threshold,
+                imgsz=(declared.input_size or (640, 640))[0],
+                models_dir=settings.models.models_dir,
+            )
+            record(
+                "plate_detector", spec.name or "", declared.version,
+                declared.layout, detector.mode,
+            )
+            return PlateLocator(detector=detector, score_threshold=spec.score_threshold)
+        except Exception as exc:
+            log.warning(
+                "plate_detector_unavailable", model=spec.name, error=str(exc)
+            )
+
+    loaded = registry.load_backend(spec)
+    if loaded is not None:
+        record(
+            "plate_detector", spec.name or "", loaded[1].version, loaded[1].layout, "neural"
+        )
+        return PlateLocator(loaded[0], score_threshold=spec.score_threshold)
+
+    record("plate_detector", "morphological-fallback", "classical", "n/a", "classical")
+    return PlateLocator(None, score_threshold=spec.score_threshold)
 
 
 def _build_detector(

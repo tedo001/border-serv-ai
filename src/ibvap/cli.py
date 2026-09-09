@@ -122,6 +122,28 @@ def _build_parser() -> argparse.ArgumentParser:
     model_fetch.add_argument("--version", default="coco", help="registry version label")
     model_fetch.add_argument("--imgsz", type=int, default=640, help="export input size")
     model_fetch.add_argument("--opset", type=int, default=17, help="ONNX opset")
+    model_fetch.add_argument(
+        "--role", default="detector",
+        help="registry role: detector, plate_detector, face_detector, classifier",
+    )
+    model_fetch.add_argument(
+        "--format", default="onnx", choices=["onnx", "engine", "both"],
+        help="onnx ships in a site build; engine is built on the node that runs it",
+    )
+    model_fetch.add_argument(
+        "--half", action="store_true",
+        help="build the engine in FP16 (roughly halves latency on a modern GPU)",
+    )
+    model_fetch.add_argument(
+        "--int8", action="store_true",
+        help="build the engine in INT8; requires --data for calibration",
+    )
+    model_fetch.add_argument(
+        "--data", help="dataset YAML used to calibrate an INT8 engine",
+    )
+    model_fetch.add_argument(
+        "--workspace", type=float, help="TensorRT workspace limit, GiB",
+    )
     model_fetch.add_argument("--registry", default="models/registry.yaml")
     model_fetch.add_argument("--models-dir", default="models")
     model_fetch.add_argument(
@@ -455,8 +477,10 @@ def _models_fetch(args: Any) -> int:
     from ibvap.vision.ultralytics_detector import (
         UltralyticsDetector,
         checkpoint_classes,
+        export_engine,
         export_onnx,
         is_rtdetr,
+        tensorrt_readiness,
     )
 
     checkpoint = args.checkpoint if args.checkpoint.endswith(".pt") else f"{args.checkpoint}.pt"
@@ -473,42 +497,96 @@ def _models_fetch(args: Any) -> int:
 
     if args.no_export:
         print("\n--no-export: the Torch runtime can use this checkpoint now.")
-        print(f"Point a camera at it with:  models.detector.name: {name}")
+        print(f"Point a camera at it with:  models.{args.role}.name: {name}")
         return 0
 
     layout = "rtdetr" if is_rtdetr(checkpoint) else "yolov8"
-    destination = models_dir / "detector" / f"{Path(checkpoint).stem}-{args.version}.onnx"
-    print(f"exporting ONNX (imgsz={args.imgsz}, opset={args.opset}) …")
-    export_onnx(
-        checkpoint, destination,
-        imgsz=args.imgsz, opset=args.opset, models_dir=models_dir,
-    )
+    subdirectory = "plate" if args.role == "plate_detector" else "detector"
+    wanted = ("onnx", "engine") if args.format == "both" else (args.format,)
+    registered: list[str] = []
 
-    metadata = {
-        "file": str(destination.relative_to(models_dir)),
-        "sha256": sha256_file(destination),
-        "layout": layout,
-        "runtime": "onnx",
-        "input_size": [args.imgsz, args.imgsz],
-        "classes": classes,
-        "size_mb": round(destination.stat().st_size / 1024**2, 2),
-        "provenance": {
-            "exported_from": Path(checkpoint).name,
-            "exporter": "ultralytics",
-            "opset": args.opset,
-        },
-    }
-    register_model(
-        args.registry, f"{name}-onnx", args.version, metadata,
-        role="detector", make_default=True,
-    )
-    print(f"  artefact    {destination}  ({metadata['size_mb']} MB)")
-    print(f"  sha256      {metadata['sha256']}")
-    print(f"\nregistered {name}-onnx:{args.version} in {args.registry}")
+    if "onnx" in wanted:
+        destination = models_dir / subdirectory / f"{Path(checkpoint).stem}-{args.version}.onnx"
+        print(f"exporting ONNX (imgsz={args.imgsz}, opset={args.opset}) …")
+        export_onnx(
+            checkpoint, destination,
+            imgsz=args.imgsz, opset=args.opset, models_dir=models_dir,
+        )
+        entry = f"{name}-onnx"
+        register_model(
+            args.registry, entry, args.version,
+            {
+                "file": str(destination.relative_to(models_dir)),
+                "sha256": sha256_file(destination),
+                "layout": layout,
+                "runtime": "onnx",
+                "input_size": [args.imgsz, args.imgsz],
+                "classes": classes,
+                "provenance": {
+                    "exported_from": Path(checkpoint).name,
+                    "exporter": "ultralytics",
+                    "opset": args.opset,
+                },
+            },
+            role=args.role, make_default=True,
+        )
+        size = round(destination.stat().st_size / 1024**2, 2)
+        print(f"  onnx        {destination}  ({size} MB)")
+        registered.append(entry)
+
+    if "engine" in wanted:
+        ready, detail = tensorrt_readiness()
+        if not ready:
+            print(f"\ncannot build a TensorRT engine: {detail}", file=sys.stderr)
+            print(
+                "A plan is compiled for the exact GPU, driver and TensorRT version "
+                "present at build time and will not load on anything else, so it is "
+                "built on the node that will run it - as a commissioning step, not "
+                "as part of the site build.",
+                file=sys.stderr,
+            )
+            return 1 if not registered else 0
+
+        print(f"building a TensorRT engine on {detail} …")
+        destination = models_dir / subdirectory / f"{Path(checkpoint).stem}-{args.version}.engine"
+        export_engine(
+            checkpoint, destination,
+            imgsz=args.imgsz, half=args.half, int8=args.int8,
+            data=args.data, workspace=args.workspace, models_dir=models_dir,
+        )
+        entry = f"{name}-trt"
+        precision = "int8" if args.int8 else ("fp16" if args.half else "fp32")
+        register_model(
+            args.registry, entry, args.version,
+            {
+                "file": str(destination.relative_to(models_dir)),
+                "sha256": sha256_file(destination),
+                "layout": layout,
+                "runtime": "ultralytics",
+                "input_size": [args.imgsz, args.imgsz],
+                "classes": classes,
+                "notes": (
+                    f"TensorRT {precision} plan built on {detail}. Not portable: "
+                    "rebuild on every node."
+                ),
+                "provenance": {
+                    "exported_from": Path(checkpoint).name,
+                    "exporter": "ultralytics/tensorrt",
+                    "built_on": detail,
+                    "precision": precision,
+                },
+            },
+            role=args.role, make_default=True,
+        )
+        size = round(destination.stat().st_size / 1024**2, 2)
+        print(f"  engine      {destination}  ({size} MB, {precision})")
+        registered.append(entry)
+
+    print(f"\nregistered {', '.join(registered)} in {args.registry}")
+    print(f"Bind one with:  models.{args.role}.name: {registered[-1]}")
     print(
-        "\nThis artefact runs on ONNX Runtime alone - a post needs no Torch. "
-        "Evaluate it on labelled footage from a representative site before "
-        "commissioning it.",
+        "\nEvaluate accuracy on labelled footage from a representative site "
+        "before commissioning any of these.",
         file=sys.stderr,
     )
     return 0

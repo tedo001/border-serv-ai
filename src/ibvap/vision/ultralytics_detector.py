@@ -25,6 +25,7 @@ runtime means the same thing on the other.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,29 @@ log = get_logger(__name__)
 #: classes; loading one with the other's wrapper fails in ways that are hard to
 #: read, so the mapping is explicit rather than guessed from the file name.
 RTDETR_PREFIXES = ("rtdetr",)
+
+#: Checkpoint names Ultralytics actually publishes and will download on demand:
+#: a family, a size letter, and an optional task suffix. Anything else is a
+#: fine-tune - a plate detector above all, which is trained per country and
+#: often per site - and must be placed on disk by whoever trained it.
+#:
+#: The pattern is deliberately tight. A prefix test would accept
+#: ``yolov8-plate.pt``, send it to the asset CDN and return a 404, which tells
+#: an operator nothing about what they were actually supposed to do.
+PUBLISHED_NAME = re.compile(
+    r"^(?:yolov?\d+[nsmlx](?:-(?:seg|cls|pose|obb|world|worldv2))?|rtdetr-[lx])$",
+    re.IGNORECASE,
+)
+
+
+def is_published(checkpoint: str) -> bool:
+    """Whether Ultralytics hosts this checkpoint for download."""
+    return bool(PUBLISHED_NAME.match(Path(checkpoint).stem))
+
+#: Weight formats the Ultralytics wrappers can load directly. ``.engine`` is a
+#: TensorRT plan: it is GPU- and driver-specific, built on the machine that
+#: will run it, and never portable between them.
+LOADABLE_SUFFIXES = frozenset({".pt", ".onnx", ".engine", ".mlpackage", ".torchscript"})
 
 #: Sensible published checkpoints. Anything else is still accepted - this is a
 #: convenience table for the console's model picker, not an allowlist.
@@ -66,6 +90,11 @@ def weights_dir(models_dir: Path | str = "models") -> Path:
 
 def is_rtdetr(checkpoint: str) -> bool:
     return Path(checkpoint).name.lower().startswith(RTDETR_PREFIXES)
+
+
+def is_engine(checkpoint: str) -> bool:
+    """Whether this weight file is a built TensorRT plan."""
+    return Path(checkpoint).suffix.lower() == ".engine"
 
 
 class UltralyticsDetector(BaseDetector):
@@ -148,6 +177,23 @@ class UltralyticsDetector(BaseDetector):
         target = weights_dir(models_dir) / given.name
         if target.is_file():
             return target
+
+        if given.suffix.lower() != ".pt":
+            # Only Torch checkpoints are published for download. A TensorRT
+            # plan in particular is built for one GPU and one driver stack and
+            # cannot be fetched from anywhere - saying so beats a 404.
+            raise ModelError(
+                f"{given.name} is not present at {target}, and only .pt checkpoints "
+                f"can be downloaded. Build an engine with: "
+                f"ibvap models fetch <checkpoint> --format engine"
+            )
+        if not is_published(given.name):
+            raise ModelError(
+                f"{given.name} is not a published Ultralytics checkpoint and is not "
+                f"present at {target}. This is expected for a fine-tune such as a "
+                f"plate detector: copy your trained weights to {target} (or give the "
+                f"registry entry an absolute path) and start again."
+            )
         target.parent.mkdir(parents=True, exist_ok=True)
         # Ultralytics downloads relative to the working directory, so point it
         # at the weights directory for the duration of the fetch.
@@ -171,7 +217,11 @@ class UltralyticsDetector(BaseDetector):
             os.chdir(previous)
 
         if not target.is_file():
-            raise ModelError(f"download of {given.name} produced no file at {target}")
+            raise ModelError(
+                f"download of {given.name} produced no file at {target}. If this "
+                f"node has no route to the asset CDN, copy the checkpoint there "
+                f"by hand - nothing else about it needs the network."
+            )
         log.info("checkpoint_downloaded", checkpoint=given.name, path=str(target))
         return target
 
@@ -276,6 +326,114 @@ def export_onnx(
     destination.parent.mkdir(parents=True, exist_ok=True)
     Path(produced).replace(destination)
     log.info("onnx_exported", checkpoint=checkpoint, path=str(destination))
+    return destination
+
+
+def tensorrt_readiness(device: str = "auto") -> tuple[bool, str]:
+    """Whether this machine can build a TensorRT engine, and why not if it cannot.
+
+    Reported rather than raised, because the answer is a property of the
+    machine and the caller usually wants to say something useful about it: a
+    build host with no GPU is a perfectly normal place to be, it just cannot
+    produce a plan.
+    """
+    try:
+        import torch
+    except ImportError:
+        return False, "PyTorch is not installed; install the 'torch' extra"
+
+    if device == "cpu":
+        return False, "TensorRT needs a CUDA device; device is pinned to cpu"
+    if not torch.cuda.is_available():
+        return False, (
+            "no CUDA device is visible. A TensorRT plan is built by the GPU that "
+            "will run it, so it must be built on the target node itself"
+        )
+    try:
+        import tensorrt
+    except ImportError:
+        return False, (
+            "the tensorrt package is not installed. On an NVIDIA Jetson it ships "
+            "with JetPack; elsewhere: pip install tensorrt"
+        )
+
+    name = torch.cuda.get_device_name(0)
+    return True, f"{name}, TensorRT {getattr(tensorrt, '__version__', 'unknown')}"
+
+
+def export_engine(
+    checkpoint: str,
+    destination: Path | str,
+    *,
+    imgsz: int = 640,
+    half: bool = True,
+    int8: bool = False,
+    workspace: float | None = None,
+    dynamic: bool = False,
+    batch: int = 1,
+    data: str | None = None,
+    models_dir: Path | str = "models",
+) -> Path:
+    """Build a TensorRT engine from a checkpoint.
+
+    A TensorRT plan is not a portable artefact. It is compiled against the
+    exact GPU architecture, driver and TensorRT version present at build time,
+    and will refuse to load on anything else - so unlike the ONNX artefact,
+    this one is built *on the node it will run on*, as part of commissioning
+    it, and never shipped in the site build.
+
+    What it buys is the reason to bother: fused kernels and FP16 typically cut
+    detector latency by a factor of two to four against ONNX Runtime on the
+    same GPU, which is the difference between a Jetson carrying four cameras
+    and carrying twelve.
+    """
+    ready, detail = tensorrt_readiness()
+    if not ready:
+        raise ModelError(f"cannot build a TensorRT engine: {detail}")
+
+    try:
+        from ultralytics import RTDETR, YOLO
+    except ImportError as exc:  # pragma: no cover - exercised by the extra
+        raise ModelError(
+            "exporting needs the 'torch' extra: pip install -e '.[torch]'"
+        ) from exc
+
+    if int8 and not data:
+        # INT8 calibrates against real images. Without them Ultralytics falls
+        # back to a default set that looks nothing like a border camera at
+        # night, and the accuracy loss is silent.
+        raise ModelError(
+            "INT8 calibration needs representative images: pass --data with a "
+            "dataset YAML drawn from the site this engine will run at"
+        )
+
+    path = UltralyticsDetector._resolve(checkpoint, Path(models_dir))
+    loader = RTDETR if is_rtdetr(checkpoint) else YOLO
+    model = loader(str(path))
+
+    options: dict[str, Any] = {
+        "format": "engine",
+        "imgsz": imgsz,
+        "half": half and not int8,
+        "int8": int8,
+        "dynamic": dynamic,
+        "batch": batch,
+        "device": 0,
+    }
+    if workspace is not None:
+        options["workspace"] = workspace
+    if data:
+        options["data"] = data
+
+    log.info("engine_build_started", checkpoint=checkpoint, gpu=detail, **{
+        k: v for k, v in options.items() if k != "format"
+    })
+    produced = model.export(**options)
+
+    destination = Path(destination)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    Path(produced).replace(destination)
+    log.info("engine_exported", checkpoint=checkpoint, path=str(destination), gpu=detail)
     return destination
 
 

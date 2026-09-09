@@ -28,7 +28,7 @@ import numpy as np
 
 from ibvap.core.geometry import Tripwire, Zone
 from ibvap.core.logging import get_logger
-from ibvap.core.types import Detection, ObjectCategory, Track
+from ibvap.core.types import BBox, Detection, ObjectCategory, Track
 
 log = get_logger(__name__)
 
@@ -155,8 +155,14 @@ class SupervisionRenderer:
         *,
         zones: list[Zone] | None = None,
         tripwires: list[Tripwire] | None = None,
+        plates: dict[int, tuple[BBox, str]] | None = None,
     ) -> np.ndarray:
-        """Return an annotated copy of ``frame`` (BGR in, BGR out)."""
+        """Return an annotated copy of ``frame`` (BGR in, BGR out).
+
+        ``plates`` maps a track id to its current plate box and text, so a
+        vehicle carries its read on screen while the vote is still being
+        gathered rather than only once the event fires.
+        """
         canvas = frame.copy()
         height, width = canvas.shape[:2]
 
@@ -166,14 +172,22 @@ class SupervisionRenderer:
         for wire in tripwires or []:
             if wire.enabled:
                 _draw_line(canvas, wire, width, height)
+        for box, text in (plates or {}).values():
+            _draw_plate(canvas, box, text)
 
         if not tracks:
             return canvas
 
         detections = tracks_to_sv(tracks)
-        labels = [
-            f"#{t.track_id} {t.obj_class.value} {t.score:.2f}" for t in tracks
-        ]
+        labels = []
+        for track in tracks:
+            label = f"#{track.track_id} {track.obj_class.value} {track.score:.2f}"
+            plate = track.attributes.get("plate") or track.attributes.get(
+                "plate_candidate"
+            )
+            if plate:
+                label = f"{label}  [{plate}]"
+            labels.append(label)
         if self.trace is not None:
             canvas = self.trace.annotate(canvas, detections)
         canvas = self.box.annotate(canvas, detections)
@@ -192,6 +206,38 @@ def _draw_polygon(canvas: np.ndarray, points: list[tuple[float, float]]) -> None
     cv2.fillPoly(overlay, [array], (255, 190, 90))
     cv2.addWeighted(overlay, 0.18, canvas, 0.82, 0, canvas)
     cv2.polylines(canvas, [array], True, (255, 190, 90), 2, cv2.LINE_AA)
+
+
+def _draw_plate(canvas: np.ndarray, box: BBox, text: str) -> None:
+    """Draw the plate box and its current read.
+
+    Deliberately a different colour and weight from the object boxes: the plate
+    is a region inside a vehicle box, and drawing them alike makes a crowded
+    gate unreadable.
+    """
+    import cv2
+
+    x1, y1, x2, y2 = box.clip(canvas.shape[1], canvas.shape[0]).as_int_tuple()
+    if x2 <= x1 or y2 <= y1:
+        return
+    cv2.rectangle(canvas, (x1, y1), (x2, y2), (60, 220, 255), 2, cv2.LINE_AA)
+    if not text:
+        return
+    scale, thickness = 0.55, 2
+    (tw, th), baseline = cv2.getTextSize(
+        text, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness
+    )
+    # Flip the caption below the box when it would be cropped off the top.
+    top = y1 - th - baseline - 4
+    origin_y = top if top >= 0 else y2 + 2
+    cv2.rectangle(
+        canvas, (x1, origin_y), (x1 + tw + 8, origin_y + th + baseline + 4),
+        (60, 220, 255), -1,
+    )
+    cv2.putText(
+        canvas, text, (x1 + 4, origin_y + th + 2),
+        cv2.FONT_HERSHEY_SIMPLEX, scale, (20, 20, 20), thickness, cv2.LINE_AA,
+    )
 
 
 def _draw_line(canvas: np.ndarray, wire: Tripwire, width: int, height: int) -> None:

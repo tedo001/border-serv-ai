@@ -115,8 +115,9 @@ registry entry rather than of the code:
 
 | Runtime | What it is | Where it belongs |
 |---|---|---|
-| `ultralytics` | A published Torch checkpoint - RT-DETR or YOLO - run directly | Development, evaluation, tuning |
+| `ultralytics` | A Torch checkpoint - RT-DETR or YOLO - run directly | Development, evaluation, tuning |
 | `onnx` | A verified, checksummed ONNX artefact on ONNX Runtime | A border post |
+| `ultralytics` + `.engine` | A TensorRT plan, built by the GPU that runs it | A GPU node, after commissioning |
 
 The point of keeping both is that the first produces the second:
 
@@ -126,6 +127,19 @@ ibvap models fetch rtdetr-l
   export ONNX               ->  models/detector/rtdetr-l-coco.onnx
   hash and register         ->  models/registry.yaml
 ```
+
+```
+ibvap models fetch rtdetr-l --format engine --half
+  build a TensorRT plan  ->  models/detector/rtdetr-l-coco.engine
+```
+
+A plan is **not a portable artefact**. It is compiled against the exact GPU
+architecture, driver and TensorRT version present at build time and refuses to
+load on anything else, so unlike the ONNX artefact it is built on the node that
+will run it, as a commissioning step, and never shipped in the site build. What
+it buys is the reason to bother: fused kernels and FP16 typically cut detector
+latency several-fold on the same GPU, which is the difference between a Jetson
+carrying four cameras and carrying twelve.
 
 A post then binds the ONNX entry and never installs Torch. Both carry the same
 weights, so a threshold tuned in the analyst console means the same thing in
@@ -141,6 +155,67 @@ exports `(300, 6)` of `[cx, cy, w, h, confidence, class_id]`. Reading the
 second as the first put a class *index* of up to 79 through a sigmoid, and 300
 phantom detections came back at score 0.51 - `sigmoid(0)` - every one labelled
 class 0. Both forms are now decoded and both are pinned by tests.
+
+### ANPR: two detectors, a filter and a vote
+
+Plate reading is the one stage where a single frame is never enough, so it is
+built as a chain rather than a call:
+
+```
+  RT-DETR / YOLO            vehicle boxes
+        │
+  ByteTrack + Kalman        one identity per vehicle, held through occlusion
+        │
+        ▼  per-track vehicle crop
+  YOLOv8 plate detector     a plate box inside that crop
+        │                   (morphological search when no model is present)
+        ▼
+  Kalman filter per plate   smooths the box; predicts through missed frames
+        │                   gates out detections that jump off the plate
+        ▼  deskew, upscale
+  CRNN + CTC                raw glyphs
+        │
+  Indian plate grammar      template coercion, glyph/digit confusion, RTO code
+        │
+        ▼
+  weighted vote             decided when one candidate leads by a margin
+        │
+  watchlist                 →  PLATE_READ, PLATE_MATCH
+```
+
+Three parts of that deserve their reasons stated.
+
+**Why a Kalman filter on the plate and not just on the vehicle.** The plate is
+a small box inside a moving one. Its detection jitters frame to frame, and
+cropping the raw box hands OCR a differently-framed image every time. Smoothing
+gives a stable crop. It also predicts: on the frames where the plate is lost
+entirely - a wiper, a pillar, a blown highlight - the estimate still says where
+it is, so OCR gets a chance on a frame that would otherwise have contributed
+nothing. The filter is gated: an observation that lands implausibly far from
+the prediction is refused, because plate detectors fire on headlights and
+reflective strips, and accepting one drags the filter off the plate and every
+crop after it.
+
+**Why a vote and not the best read.** At a gate the vehicle is moving, the
+plate is thirty pixels tall and half the frames are blurred. Any one frame
+produces something plausible and often wrong, and `HR26DK8337` against
+`HR26DK8837` is the difference between waving a car through and stopping it. So
+each frame contributes its normalised text weighted by OCR confidence, with
+grammatical plates weighted above ungrammatical ones - the grammar is evidence
+independent of the network - and a decision needs both a minimum number of
+reads and a margin over the runner-up. Ten different readings is not a plate,
+it is ten guesses, and the platform reports nothing.
+
+**Why the plate detector is not shipped.** There is no "licence plate" class in
+COCO, and plate shape, colour and mounting differ by country and often by site.
+It is a fine-tune, trained on crops from the posts it will serve, and the
+registry declares it rather than downloading it. Until one exists ANPR
+localises morphologically - by the dense band of vertical strokes a plate makes
+in gradient space - which works on a clean approach and struggles at angle and
+at night. `/health` says which is running.
+
+The emitted event carries `reads`, `total_reads`, `vote_margin` and
+`runner_up`, so a disputed read can be reviewed without re-running the footage.
 
 ### Detector families
 

@@ -267,6 +267,12 @@ class AnalyticsConfig(BaseModel):
     max_events_per_camera_per_minute: int = Field(default=60, ge=1, le=10_000)
     #: Seconds of identical-key events collapsed into one alert.
     dedup_window_seconds: float = Field(default=20.0, ge=0.0)
+    #: Frames that must agree before a plate is reported. A single-frame read
+    #: at a gate is a guess; three agreeing reads is a plate.
+    plate_min_reads: int = Field(default=3, ge=1, le=50)
+    #: How far the leading plate candidate must lead the runner-up, by weight,
+    #: before it is reported. A leader that only just leads is not a read.
+    plate_vote_margin: float = Field(default=1.5, ge=1.0, le=20.0)
 
 
 class EvidenceConfig(BaseModel):

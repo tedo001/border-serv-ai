@@ -187,6 +187,40 @@ models:
         enabled: true
 
   # --- ANPR ----------------------------------------------------------------
+  # A plate detector is a fine-tune, not a published checkpoint: plate shape,
+  # colour and mounting differ by country and often by site, and no COCO model
+  # has a "licence plate" class. Train YOLOv8 on plate crops from the posts
+  # this will serve, drop the weights at models/weights/yolov8-plate.pt, and
+  # flip `enabled` below.
+  #
+  #   ibvap models fetch models/weights/yolov8-plate.pt \
+  #       --role plate_detector --name plate-yolov8 --format onnx
+  #
+  # Until then ANPR localises plates morphologically - by the dense band of
+  # vertical strokes a plate makes in gradient space - which finds most plates
+  # on a clean approach and struggles at angle and at night. /health reports
+  # which one is running.
+  plate-yolov8:
+    role: plate_detector
+    description: >
+      YOLOv8 fine-tuned for licence-plate localisation inside a vehicle crop.
+      Single class. Runs on the Torch runtime for evaluation and on TensorRT
+      once `ibvap models fetch ... --format engine` has built a plan on the
+      node.
+    default: "site"
+    versions:
+      "site":
+        file: yolov8-plate.pt
+        runtime: ultralytics
+        layout: yolov8
+        input_size: [640, 640]
+        classes: [plate]
+        enabled: false          # flip to true once the checkpoint is in place
+        notes: >
+          Trained per deployment. Evaluate on night and oblique-angle footage
+          from the actual posts before commissioning: plate localisation
+          degrades far faster with angle than vehicle detection does.
+
   plate-detector:
     role: plate_detector
     description: Single-class plate localiser, run inside vehicle crops.

@@ -85,8 +85,13 @@ The checkpoint downloads into `models/weights` on first use. For a border post,
 export the same weights to ONNX so the node needs no Torch at all:
 
 ```bash
-ibvap models fetch rtdetr-l       # download -> export ONNX -> hash -> register
+ibvap models fetch rtdetr-l                    # -> ONNX, for a CPU post
+ibvap models fetch rtdetr-l --format engine --half   # -> TensorRT, on a GPU node
 ```
+
+A TensorRT plan is built by the GPU that will run it and refuses to load
+anywhere else, so it is a commissioning step on the node — not something the
+site build carries.
 
 Both runtimes carry the same weights and agree to within 0.006 of score and two
 pixels of box on the same frame, so a threshold tuned in the console means the
@@ -140,6 +145,11 @@ Remote border posts are not data centres, and the design reflects that:
   alerts stay live rather than becoming a historical record.
 - **Suppresses the false alarms that matter.** Livestock on a rural fence line
   is the dominant false-alarm source; it is suppressible by class.
+- **Reads a plate by agreement, not by luck.** A Kalman filter follows the
+  plate box through the frames the detector loses it, and the read is decided
+  by a weighted vote across the vehicle's whole passage — with the evidence
+  attached to the event, because `HR26DK8337` and `HR26DK8837` are not the
+  same vehicle.
 - **Evidence you can defend.** SHA-256 per artefact and a per-day hash chain, so
   both alteration and deletion are detectable months later.
 - **Runs unprivileged** on commodity hardware, from a fanless mini-PC upward.

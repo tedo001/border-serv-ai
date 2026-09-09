@@ -286,8 +286,14 @@ You will know it worked from the console: the detector line reads
 For a real deployment, export the same weights so the node needs no Torch:
 
 ```bash
-ibvap models fetch rtdetr-l
+ibvap models fetch rtdetr-l                          # ONNX, any machine
+ibvap models fetch rtdetr-l --format engine --half   # TensorRT, on a GPU node
 ```
+
+The engine build only works where there is an NVIDIA GPU and the `tensorrt`
+package: a plan is compiled for the exact GPU and driver in front of it and
+will not load anywhere else. Without one the command says so and stops rather
+than producing something that cannot work.
 
 This downloads the checkpoint, exports ONNX, hashes it and writes the entry
 into `models/registry.yaml`. Bind `rtdetr-l-onnx` in your site file and the

@@ -5,13 +5,18 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from ibvap.core.types import BBox, Detection, ObjectClass
 from ibvap.vision.anpr import (
     DEFAULT_CHARSET,
+    PlateLocator,
+    PlateReader,
     PlateWatchlist,
     ctc_greedy_decode,
     normalise_plate,
     plates_match,
 )
+from ibvap.vision.backends import CallableBackend
+from ibvap.vision.detector import BaseDetector
 
 
 class TestPlateNormalisation:
@@ -145,3 +150,119 @@ class TestPlateWatchlist:
         watchlist.add("MH12AB1234")
         assert watchlist.remove("mh 12 ab 1234")
         assert watchlist.size == 0
+
+
+class TestPlateLocatorRuntimes:
+    """Localisation runs on whatever detector the registry declared.
+
+    A plate detector is a single-class YOLOv8 fine-tune, and it must be able to
+    arrive on any runtime the platform supports - Torch, TensorRT or ONNX -
+    without the ANPR code knowing which.
+    """
+
+    class _Stub(BaseDetector):
+        mode = "stub"
+        is_neural = True
+
+        def __init__(self, boxes):
+            self.boxes = boxes
+            self.calls = 0
+
+        def detect(self, image):
+            self.calls += 1
+            return [
+                Detection(bbox=box, obj_class=ObjectClass.UNKNOWN, score=score,
+                          raw_label="plate")
+                for box, score in self.boxes
+            ]
+
+    def test_any_detector_can_locate_plates(self) -> None:
+        stub = self._Stub([(BBox(10, 40, 90, 64), 0.9)])
+        locator = PlateLocator(detector=stub)
+        boxes = locator.locate(np.zeros((120, 200, 3), dtype=np.uint8))
+
+        assert locator.is_neural
+        assert locator.mode == "stub"
+        assert [b.as_int_tuple() for b in boxes] == [(10, 40, 90, 64)]
+
+    def test_candidates_come_back_best_first(self) -> None:
+        stub = self._Stub([
+            (BBox(0, 0, 20, 10), 0.30),
+            (BBox(10, 40, 90, 64), 0.95),
+            (BBox(5, 5, 40, 20), 0.60),
+        ])
+        boxes = PlateLocator(detector=stub).locate(
+            np.zeros((120, 200, 3), dtype=np.uint8)
+        )
+        assert boxes[0].as_int_tuple() == (10, 40, 90, 64)
+
+    def test_the_detector_is_built_once_not_per_frame(self) -> None:
+        """Localisation runs on every vehicle in every frame.
+
+        Constructing the detector inside `locate` re-resolved the class
+        allowlist and input size each time, on the hottest path ANPR has.
+        """
+        backend = CallableBackend(
+            lambda _feeds: [np.zeros((1, 5, 6), dtype=np.float32)],
+            input_shape=(1, 3, 640, 640),
+        )
+        locator = PlateLocator(backend)
+        first = locator.detector
+        locator.locate(np.zeros((120, 200, 3), dtype=np.uint8))
+        locator.locate(np.zeros((120, 200, 3), dtype=np.uint8))
+        assert locator.detector is first
+
+    def test_without_a_detector_it_says_so(self) -> None:
+        """The morphological search is useful, but it is not a detector.
+
+        Reporting it as one would tell a control room its ANPR is neural when
+        it is edge density and an aspect-ratio filter.
+        """
+        locator = PlateLocator(None)
+        assert locator.is_neural is False
+        assert locator.mode == "morphological"
+
+
+class TestReadBox:
+    def test_reading_a_known_box_skips_localisation(self) -> None:
+        """This is what a Kalman-smoothed plate track buys.
+
+        On a frame where the detector loses the plate, the filter still says
+        where it is, and OCR gets its chance on a frame that would otherwise
+        have contributed nothing to the vote.
+        """
+        class Ocr:
+            available = True
+
+            def read(self, image):
+                return "MH12AB1234", 0.88
+
+        reader = PlateReader(PlateLocator(None), Ocr())
+        frame = np.full((240, 320, 3), 128, dtype=np.uint8)
+        reading = reader.read_box(frame, BBox(100, 150, 200, 180))
+
+        assert reading is not None
+        assert reading.text == "MH12AB1234"
+        assert reading.bbox is not None
+        assert reading.bbox.as_int_tuple() == (100, 150, 200, 180)
+
+    def test_no_ocr_means_no_read(self) -> None:
+        class Ocr:
+            available = False
+
+            def read(self, image):  # pragma: no cover - must never be called
+                raise AssertionError("OCR ran while unavailable")
+
+        reader = PlateReader(PlateLocator(None), Ocr())
+        assert reader.read_box(np.zeros((240, 320, 3), np.uint8), BBox(1, 1, 9, 9)) is None
+
+    def test_a_box_outside_the_frame_reads_nothing(self) -> None:
+        class Ocr:
+            available = True
+
+            def read(self, image):  # pragma: no cover - must never be called
+                raise AssertionError("OCR ran on an empty crop")
+
+        reader = PlateReader(PlateLocator(None), Ocr())
+        frame = np.zeros((240, 320, 3), dtype=np.uint8)
+        assert reader.read_box(frame, BBox(500, 500, 560, 520)) is None
