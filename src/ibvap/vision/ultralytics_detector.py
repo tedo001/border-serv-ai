@@ -336,14 +336,21 @@ def tensorrt_readiness(device: str = "auto") -> tuple[bool, str]:
     machine and the caller usually wants to say something useful about it: a
     build host with no GPU is a perfectly normal place to be, it just cannot
     produce a plan.
+
+    Checks run cheapest-first, and the pinned-device check comes before the
+    import because it needs nothing installed to answer. Ordering it after the
+    import made the reply depend on whether Torch happened to be present -
+    which is exactly the kind of environment-dependent answer this function
+    exists to remove.
     """
+    if device == "cpu":
+        return False, "TensorRT needs a CUDA device; device is pinned to cpu"
+
     try:
         import torch
     except ImportError:
         return False, "PyTorch is not installed; install the 'torch' extra"
 
-    if device == "cpu":
-        return False, "TensorRT needs a CUDA device; device is pinned to cpu"
     if not torch.cuda.is_available():
         return False, (
             "no CUDA device is visible. A TensorRT plan is built by the GPU that "

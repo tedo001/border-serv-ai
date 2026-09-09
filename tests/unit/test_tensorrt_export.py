@@ -10,6 +10,8 @@ mistaken for something portable.
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from ibvap.core.errors import ModelError
@@ -51,6 +53,30 @@ class TestReadiness:
         ready, detail = tensorrt_readiness(device="cpu")
         assert ready is False
         assert "cpu" in detail.lower()
+
+    def test_the_pinned_device_is_answered_without_torch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A pinned CPU device needs nothing installed to rule out.
+
+        Checking the import first made the answer depend on whether Torch
+        happened to be present: the same call returned "device is pinned to
+        cpu" on a developer's machine and "PyTorch is not installed" in CI,
+        which is exactly the environment-dependent reply this function exists
+        to remove.
+        """
+        monkeypatch.setitem(sys.modules, "torch", None)
+        ready, detail = tensorrt_readiness(device="cpu")
+        assert ready is False
+        assert "cpu" in detail.lower()
+
+    def test_a_missing_torch_is_reported_as_a_missing_torch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setitem(sys.modules, "torch", None)
+        ready, detail = tensorrt_readiness()
+        assert ready is False
+        assert "torch" in detail.lower()
 
     def test_building_without_a_gpu_refuses_before_doing_any_work(
         self, workspace

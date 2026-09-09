@@ -16,6 +16,7 @@ disagree about what "Start node" does.
 
 from __future__ import annotations
 
+import functools
 import os
 import sys
 from pathlib import Path
@@ -591,24 +592,71 @@ def _duration(seconds: float) -> str:
     return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
 
 
-def _get_json(url: str, timeout: float = 3.0, token: str | None = None) -> Any:
-    import json
-    import urllib.error
+@functools.lru_cache(maxsize=1)
+def _http_opener() -> Any:
+    """An opener that can only speak HTTP.
+
+    ``urllib.request.urlopen`` honours whatever scheme the URL carries, so a
+    ``file://`` or ``ftp://`` string reaching it reads a local file rather than
+    failing. The URLs here are assembled from ``IBVAP_PORT``, an environment
+    variable this window does not control, so the restriction is worth making
+    structural rather than assumed.
+
+    Built from a bare :class:`~urllib.request.OpenerDirector` rather than with
+    ``build_opener``: that helper adds the *default* handler set - file, FTP,
+    data - on top of whatever is passed, so restricting it that way silences a
+    scanner while changing nothing. Redirects are left out too; the node this
+    talks to is on the loopback interface and has no reason to bounce anywhere.
+    """
     import urllib.request
 
-    request = urllib.request.Request(url)
-    if token:
-        request.add_header("authorization", f"Bearer {token}")
+    opener = urllib.request.OpenerDirector()
+    for handler in (
+        urllib.request.HTTPHandler,
+        urllib.request.HTTPSHandler,
+        urllib.request.HTTPDefaultErrorHandler,
+        urllib.request.HTTPErrorProcessor,
+        # Turns an unhandled scheme into a URLError. Without it the director
+        # returns None, and the caller ends up calling __enter__ on it.
+        urllib.request.UnknownHandler,
+    ):
+        opener.add_handler(handler())
+    return opener
+
+
+#: The only schemes this window will fetch. The node it talks to is HTTP on
+#: the loopback interface; nothing else is a legitimate destination.
+ALLOWED_SCHEMES = frozenset({"http", "https"})
+
+
+def _open_json(request: Any, timeout: float) -> Any:
+    import json
+    import urllib.error
+
+    scheme = request.type or ""
+    if scheme.lower() not in ALLOWED_SCHEMES:
+        # Refused here as well as by the opener, so the reason is a log line
+        # rather than a URLError several frames down.
+        log.warning("refused_url_scheme", scheme=scheme, url=request.full_url)
+        return None
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _http_opener().open(request, timeout=timeout) as response:
             return json.loads(response.read().decode())
     except (urllib.error.URLError, TimeoutError, OSError, ValueError):
         return None
 
 
+def _get_json(url: str, timeout: float = 3.0, token: str | None = None) -> Any:
+    import urllib.request
+
+    request = urllib.request.Request(url)
+    if token:
+        request.add_header("authorization", f"Bearer {token}")
+    return _open_json(request, timeout)
+
+
 def _login(base_url: str, credentials: tuple[str, str], timeout: float = 4.0) -> str | None:
     import json
-    import urllib.error
     import urllib.request
 
     user, password = credentials
@@ -617,11 +665,8 @@ def _login(base_url: str, credentials: tuple[str, str], timeout: float = 4.0) ->
         f"{base_url}/api/v1/auth/login", data=body, method="POST"
     )
     request.add_header("content-type", "application/json")
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read().decode()).get("access_token")
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-        return None
+    payload = _open_json(request, timeout)
+    return payload.get("access_token") if isinstance(payload, dict) else None
 
 
 def _url(text: str) -> Any:

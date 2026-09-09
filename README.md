@@ -181,6 +181,15 @@ ibvap secret                                  # generate a signing key
 
 ## Development
 
+CI installs only the `dev` extra, so a test that quietly depends on `torch`,
+`supervision` or `PyQt6` passes locally and fails there. Before pushing
+anything that touches an optional dependency:
+
+```bash
+python scripts/ci_like.py tests/unit -q          # what a CI runner sees
+python scripts/ci_like.py tests/integration -q
+```
+
 ```bash
 pytest tests/ -q                    # 247 tests
 pytest tests/unit -q                # fast subset (~5 s)
