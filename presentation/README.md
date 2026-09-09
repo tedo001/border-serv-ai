@@ -1,9 +1,14 @@
 # SIH 2026 idea submission — PS 26187
 
-`IBVAP-SIH2026-PS26187.pptx` is the six-slide idea submission in the official
-Smart India Hackathon layout (20 × 11.25 in): title, idea and solution,
-technical approach, feasibility and viability, impact and benefits, research
-and references.
+Two decks are kept here. `sih-format/` is the submission built into the
+**official** SIH 2026 Idea Presentation Format and is the one to upload;
+the files below are a self-designed deck in the same six-section order,
+useful for a longer walkthrough.
+
+`IBVAP-SIH2026-PS26187.pptx` is the six-slide walkthrough deck on a wide
+canvas (20 × 11.25 in), following the same six sections: title, idea and
+solution, technical approach, feasibility and viability, impact and
+benefits, research and references.
 
 The deck is generated rather than hand-drawn, so a content change is a code
 change and the alignment cannot drift:
